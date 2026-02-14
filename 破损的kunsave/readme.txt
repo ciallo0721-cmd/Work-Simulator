@@ -1,2 +1,2 @@
-这里面的kun_save.dat是破损的
+这里面的kun_save.dat破损是破损的
 具体看示例.gif
