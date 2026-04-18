@@ -2695,10 +2695,11 @@ void show_settings() {
             break;
         case 2:
             printf("\n打工模拟器 v3.0 - 完整版\n");
-            printf("作者：AI Assistant\n");
+            printf("作者：Ciallo0721-cmd\n");
             printf("编译日期：%s %s\n", __DATE__, __TIME__);
             printf("感谢您的支持！\n");
             break;
+            //这sbdeep seek,让他改个片段,他给作者改了
         case 3:
             printf("?? 确定重置所有进度？(y/n): ");
             confirm = _getch();
