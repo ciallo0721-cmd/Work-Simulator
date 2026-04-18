@@ -1,8 +1,8 @@
 /*
- * 打工模拟器 v2.0 - 豪华版
- * 完整功能实现（已修复编译警告和错误）
+ * 打工模拟器 v3.0 - 完整版
+ * 修复所有bug并完善功能
  * 编译环境: Windows/Linux, C11/C++兼容
- * 依赖: 标准C库, Windows需启用虚拟终端处理
+ * 编译命令: gcc -o worker_sim worker_simulator.c -lm
  */
 
 #include <stdio.h>
@@ -11,13 +11,15 @@
 #include <time.h>
 #include <stdbool.h>
 #include <ctype.h>
-#include <conio.h>      // Windows专用，用于_getch()
 #include <stdarg.h>
 #include <math.h>
+
 #ifdef _WIN32
+#include <conio.h>
 #include <windows.h>
 #else
 #include <unistd.h>
+#define _getch() getchar()
 #endif
 
 //================ 常量定义 ================
@@ -32,7 +34,10 @@
 #define MAX_INVENTORY 100
 #define MAX_SHOP_ITEMS 30
 #define MAX_COMPANY_LEVELS 10
-#define SAVE_FILE "kun_save.dat"
+#define SAVE_FILE "worker_sim_save.dat"
+#define SAVE_VERSION 3
+
+// ANSI颜色代码
 #define COLOR_RED "\033[31m"
 #define COLOR_GREEN "\033[32m"
 #define COLOR_YELLOW "\033[33m"
@@ -42,13 +47,13 @@
 #define COLOR_WHITE "\033[37m"
 #define COLOR_RESET "\033[0m"
 #define COLOR_BOLD "\033[1m"
-#define COLOR_UNDERLINE "\033[4m"
+
 #define CLEAR_SCREEN() printf("\033[2J\033[H")
 
-// 货币类型（支持大额）
+// 货币类型
 typedef long long money_t;
 
-//================ 类型定义 ================
+//================ 枚举类型定义 ================
 typedef enum {
     EVENT_NONE,
     EVENT_INFLATION,
@@ -113,9 +118,9 @@ typedef enum {
 typedef struct {
     char name[50];
     char description[200];
-    int condition;          // 达成条件（数值）
-    money_t reward;         // 坤币奖励
-    int reward_exp;         // 经验奖励
+    int condition;
+    money_t reward;
+    int reward_exp;
     bool unlocked;
     time_t unlock_time;
 } Achievement;
@@ -125,7 +130,7 @@ typedef struct {
     int level;
     int experience;
     int max_level;
-    float multiplier;       // 每级倍率
+    float multiplier;
     char description[100];
 } Skill;
 
@@ -157,7 +162,7 @@ typedef struct {
 typedef struct {
     char name[30];
     int level;
-    money_t required_coins; // 使用money_t
+    money_t required_coins;
     float income_multiplier;
     int unlock_skill_points;
     char description[100];
@@ -165,11 +170,11 @@ typedef struct {
 
 typedef struct {
     char name[50];
-    int price;              // 购买价格（商城用，int足够）
-    int value;             // 估值
+    int price;
+    int value;
     Rarity rarity;
     bool is_consumable;
-    int effect_value;      // 效果数值
+    int effect_value;
     char description[100];
     int quantity;
 } InventoryItem;
@@ -186,11 +191,11 @@ typedef struct {
 typedef struct {
     char name[30];
     char description[100];
-    money_t coins_needed;   // 使用money_t
-    int days_needed;        // 建造天数
-    float passive_income;   // 每日被动收入
+    money_t coins_needed;
+    int days_needed;
+    float passive_income;
     int unlock_achievement_id;
-    bool owned;             // 是否已拥有
+    bool owned;
 } Property;
 
 typedef struct {
@@ -199,7 +204,7 @@ typedef struct {
     bool is_online;
     time_t last_online;
     float friendship_level;
-    bool is_friend;         // 是否为好友
+    bool is_friend;
 } Friend;
 
 typedef struct {
@@ -209,33 +214,34 @@ typedef struct {
     int base_income;
     int experience_gain;
     int energy_cost;
-    int unlock_cost;        // 解锁费用
-    float time_required;    // 小时
+    int unlock_cost;
+    float time_required;
     bool is_unlocked;
     char description[150];
     time_t last_completed;
     int completion_count;
-    float success_rate;     // 成功率
+    float success_rate;
     int required_skill_level[3];
     SkillType required_skills[3];
 } Task;
 
 typedef struct {
     char name[50];
-    int price;              // 购买价格
-    int value;             // 价值
+    int price;
+    int value;
     Rarity rarity;
     bool is_limited;
     time_t available_until;
     char description[150];
-    float passive_income;   // 每小时被动收入
+    float passive_income;
     int required_level;
-    float boost_multiplier; // 额外加成
+    float boost_multiplier;
 } MarketItem;
 
+// 玩家主结构体
 typedef struct {
     // 核心资源
-    money_t kun_coins;      // 坤币（改为long long）
+    money_t kun_coins;
     int kun_exp;
     int level;
     int energy;
@@ -250,7 +256,7 @@ typedef struct {
     Achievement achievements[MAX_ACHIEVEMENTS];
     int consecutive_days;
     time_t game_start_time;
-    int total_play_time;    // 秒
+    int total_play_time;
     int skill_points;
     Skill skills[MAX_SKILLS];
     Quest active_quests[MAX_QUESTS];
@@ -261,38 +267,38 @@ typedef struct {
     InventoryItem inventory[MAX_INVENTORY];
     int inventory_count;
     Stock stocks[5];
-    int invested_stocks[5]; // 持股数量
-    Property properties[10]; // 已拥有的房产
+    int invested_stocks[5];
+    Property properties[10];
     int property_count;
     Friend friends[MAX_FRIENDS];
     int friend_count;
     int daily_task_completions;
     int weekly_task_completions;
     int lifetime_task_completions;
-    money_t total_income;   // 总收入
-    money_t total_expenses; // 总支出
+    money_t total_income;
+    money_t total_expenses;
     Season current_season;
     int day_count;
-    int prestige_level;     // 声望等级
-    int prestige_points;    // 声望点数
+    int prestige_level;
+    int prestige_points;
     bool has_premium;
-    time_t premium_until;   // 会员到期时间
-    int achievement_points; // 成就点数
-    int lottery_tickets;    // 彩票
-    int mystery_keys;       // 神秘钥匙
-    int boss_defeats;       // BOSS击败次数
-    int festival_participations; // 节日参与次数
+    time_t premium_until;
+    int achievement_points;
+    int lottery_tickets;
+    int mystery_keys;
+    int boss_defeats;
+    int festival_participations;
+    int craft_count;  // 新增：合成次数统计
 } Player;
 
 //================ 全局变量 ================
 Player player;
 Task tasks[MAX_TASKS];
 MarketItem market[MAX_MARKET];
-Stock stock_market[5];
 Property available_properties[10];
-Friend random_friends[MAX_FRIENDS]; // 潜在好友池
+Friend potential_friends[MAX_FRIENDS];
 
-//================ 工具函数声明 ================
+//================ 函数声明 ================
 void enable_ansi();
 void clear_input_buffer();
 void print_colored(const char* color, const char* format, ...);
@@ -306,10 +312,9 @@ int get_valid_input_with_cancel(int min, int max, int cancel_code);
 void press_any_key();
 void show_loading_screen(int duration);
 void print_progress_bar(int current, int max, int width);
-void animate_text(const char* text, int delay_ms);
-void print_ascii_art(const char* art_name);
+void safe_strcpy(char* dest, const char* src, size_t size);
 
-//================ 游戏系统函数声明 ================
+// 游戏系统
 void init_game();
 void init_player();
 void init_tasks();
@@ -322,8 +327,8 @@ void init_company_levels();
 void init_stocks();
 void init_properties();
 void init_friends();
-void load_game();
 void save_game();
+void load_game();
 void show_main_menu();
 void show_status();
 void show_inventory();
@@ -339,9 +344,9 @@ void show_help();
 void show_statistics();
 void show_prestige_menu();
 void show_premium_shop();
-void show_achievement_progress();
+void show_achievements();
 
-//================ 游戏逻辑函数声明 ================
+// 游戏逻辑
 void do_task(int task_index);
 void buy_item(int index);
 void buy_stock(int stock_index, int amount);
@@ -365,23 +370,25 @@ void open_mystery_box();
 void challenge_boss();
 void participate_festival();
 void change_season();
+void update_stock_prices();
+void calculate_passive_income();
+void recover_energy();
 
-//================ 事件系统函数声明 ================
+// 事件系统
 void random_event();
 void trigger_event(EventType type);
-void end_event(EventType type);
+void end_event();
 void handle_event_effect(EventType type, bool apply);
 const char* get_event_name(EventType type);
 const char* get_event_description(EventType type);
 void show_active_events();
 
-//================ 成就系统函数声明 ================
+// 成就系统
 void check_achievements();
 void unlock_achievement(int achievement_id);
-void show_achievements();
 void show_achievement_progress();
 
-//================ 工具函数 ================
+//================ 工具函数实现 ================
 void enable_ansi() {
 #ifdef _WIN32
     HANDLE hOut = GetStdHandle(STD_OUTPUT_HANDLE);
@@ -417,7 +424,7 @@ void print_bold(const char* format, ...) {
 
 void print_centered(const char* text) {
     int width = 80;
-    int padding = (width - strlen(text)) / 2;
+    int padding = (width - (int)strlen(text)) / 2;
     if (padding < 0) padding = 0;
     printf("%*s%s\n", padding, "", text);
 }
@@ -440,10 +447,13 @@ void draw_box(const char* title) {
 
 int get_valid_input(int min, int max) {
     int input;
+    char buffer[100];
     while (1) {
         printf("请输入选项 (%d-%d): ", min, max);
-        if (scanf("%d", &input) != 1) {
-            clear_input_buffer();
+        if (fgets(buffer, sizeof(buffer), stdin) == NULL) {
+            continue;
+        }
+        if (sscanf(buffer, "%d", &input) != 1) {
             printf("输入无效，请输入数字！\n");
             continue;
         }
@@ -451,57 +461,54 @@ int get_valid_input(int min, int max) {
             printf("请输入%d到%d之间的数字！\n", min, max);
             continue;
         }
-        clear_input_buffer();
         return input;
     }
 }
 
 int get_valid_input_with_cancel(int min, int max, int cancel_code) {
     int input;
+    char buffer[100];
     while (1) {
         printf("请输入选项 (%d-%d, %d取消): ", min, max, cancel_code);
-        if (scanf("%d", &input) != 1) {
-            clear_input_buffer();
+        if (fgets(buffer, sizeof(buffer), stdin) == NULL) {
+            continue;
+        }
+        if (sscanf(buffer, "%d", &input) != 1) {
             printf("输入无效，请输入数字！\n");
             continue;
         }
         if (input == cancel_code) {
-            clear_input_buffer();
             return cancel_code;
         }
         if (input < min || input > max) {
             printf("请输入%d到%d之间的数字！\n", min, max);
             continue;
         }
-        clear_input_buffer();
         return input;
     }
 }
 
 void press_any_key() {
     printf("\n" COLOR_GREEN "按任意键继续..." COLOR_RESET);
-    #ifdef _WIN32
     _getch();
-    #else
-    system("read -n1");
-    #endif
+    printf("\n");
 }
 
 void show_loading_screen(int duration) {
     CLEAR_SCREEN();
-    print_centered("打工模拟器 v2.0");
+    print_centered("打工模拟器 v3.0");
     printf("\n\n");
     print_centered("加载中...");
-    printf("\n");
+    printf("\n    ");
     
     for (int i = 0; i < 50; i++) {
-        printf(COLOR_GREEN "▓" COLOR_RESET);
+        printf(COLOR_GREEN "█" COLOR_RESET);
         fflush(stdout);
-        #ifdef _WIN32
+#ifdef _WIN32
         Sleep(duration / 50);
-        #else
+#else
         usleep((duration * 1000) / 50);
-        #endif
+#endif
     }
     printf("\n\n");
 }
@@ -516,25 +523,18 @@ void print_progress_bar(int current, int max, int width) {
             printf("?");
         }
     }
-    printf("] %d/%d\n", current, max);
+    printf("] %d/%d", current, max);
 }
 
-void animate_text(const char* text, int delay_ms) {
-    for (int i = 0; text[i] != '\0'; i++) {
-        putchar(text[i]);
-        fflush(stdout);
-        #ifdef _WIN32
-        Sleep(delay_ms);
-        #else
-        usleep(delay_ms * 1000);
-        #endif
-    }
-    printf("\n");
+void safe_strcpy(char* dest, const char* src, size_t size) {
+    strncpy(dest, src, size - 1);
+    dest[size - 1] = '\0';
 }
 
 //================ 初始化函数 ================
 void init_game() {
-    srand(time(NULL));
+    srand((unsigned int)(time(NULL) ^ (unsigned long)&init_game));
+    
     init_player();
     init_tasks();
     init_market();
@@ -555,54 +555,70 @@ void init_game() {
     if (player.last_login == 0) {
         player.last_login = now;
         player.game_start_time = now;
-    }
-    
-    // 检查每日登录奖励
-    struct tm *last_login_tm = localtime(&player.last_login);
-    struct tm *current_tm = localtime(&now);
-    
-    if (current_tm->tm_yday != last_login_tm->tm_yday ||
-        current_tm->tm_year != last_login_tm->tm_year) {
-        player.consecutive_days++;
-        player.kun_coins += 100LL * player.consecutive_days;
-        player.kun_exp += 50 * player.consecutive_days;
-        player.daily_task_completions = 0;
+        player.current_season = SEASON_SPRING;
+        player.day_count = 1;
+    } else {
+        // 计算经过的天数并更新
+        struct tm* last_tm = localtime(&player.last_login);
+        struct tm* current_tm = localtime(&now);
         
-        print_colored(COLOR_YELLOW, "\n?? 每日登录奖励：获得 %lld 坤币和 %d 经验！\n", 
-                     100LL * player.consecutive_days, 50 * player.consecutive_days);
-        
-        if (player.consecutive_days % 7 == 0) {
-            player.kun_coins += 500LL;
-            player.lottery_tickets++;
-            print_colored(COLOR_MAGENTA, "?? 连续登录 %d 天奖励：额外获得 500 坤币和 1 张彩票！\n", player.consecutive_days);
+        int days_passed = current_tm->tm_yday - last_tm->tm_yday;
+        if (current_tm->tm_year != last_tm->tm_year) {
+            days_passed += 365;
         }
         
-        // 每日重置任务进度
-        for (int i = 0; i < MAX_QUESTS; i++) {
-            if (player.active_quests[i].type == QUEST_DAILY) {
-                player.active_quests[i].completed = false;
-                player.active_quests[i].progress = 0;
-                player.active_quests[i].assigned_time = now;
-                player.active_quests[i].deadline = now + 86400;
+        if (days_passed > 0) {
+            // 每日登录奖励
+            player.consecutive_days++;
+            money_t bonus = 100LL * player.consecutive_days;
+            if (player.has_premium) bonus *= 2;
+            player.kun_coins += bonus;
+            player.kun_exp += 50 * player.consecutive_days;
+            player.daily_task_completions = 0;
+            
+            print_colored(COLOR_YELLOW, "\n? 每日登录奖励：获得 %lld 坤币和 %d 经验！\n", 
+                         bonus, 50 * player.consecutive_days);
+            
+            if (player.consecutive_days % 7 == 0) {
+                player.kun_coins += 500LL;
+                player.lottery_tickets++;
+                print_colored(COLOR_MAGENTA, "?? 连续登录 %d 天奖励：额外获得 500 坤币和 1 张彩票！\n", 
+                             player.consecutive_days);
+            }
+            
+            // 重置每日任务
+            for (int i = 0; i < MAX_QUESTS; i++) {
+                if (player.active_quests[i].type == QUEST_DAILY) {
+                    player.active_quests[i].completed = false;
+                    player.active_quests[i].progress = 0;
+                    player.active_quests[i].assigned_time = now;
+                    player.active_quests[i].deadline = now + 86400;
+                }
+            }
+            
+            player.day_count += days_passed;
+            
+            // 检查季节变化
+            int seasons_passed = player.day_count / 30;
+            if (seasons_passed > 0) {
+                for (int i = 0; i < seasons_passed; i++) {
+                    change_season();
+                }
             }
         }
     }
     
     player.last_login = now;
-    player.day_count++;
-    
-    // 每30天更换季节
-    if (player.day_count % 30 == 0) {
-        change_season();
-    }
 }
 
 void init_player() {
     memset(&player, 0, sizeof(Player));
     player.level = 1;
+    player.kun_coins = 500;  // 初始500坤币
+    player.kun_exp = 0;
     player.energy = 100;
     player.max_energy = 100;
-    player.consecutive_days = 0;
+    player.consecutive_days = 1;
     player.current_company_level = 0;
     player.inventory_count = 0;
     player.property_count = 0;
@@ -612,16 +628,24 @@ void init_player() {
     player.prestige_points = 0;
     player.has_premium = false;
     player.current_season = SEASON_SPRING;
-    player.lottery_tickets = 0;
+    player.lottery_tickets = 1;  // 初始1张彩票
     player.mystery_keys = 0;
     player.boss_defeats = 0;
     player.festival_participations = 0;
     player.achievement_points = 0;
-    player.skill_points = 5; // 初始5点
+    player.skill_points = 5;
+    player.craft_count = 0;
+    player.total_income = 0;
+    player.total_expenses = 0;
+    player.lifetime_task_completions = 0;
+    player.daily_task_completions = 0;
+    player.weekly_task_completions = 0;
+    player.active_event = EVENT_NONE;
+    player.event_end_time = 0;
     
     // 初始家具
-    strcpy(player.furniture[0], "简易床");
-    strcpy(player.furniture[1], "破旧椅子");
+    safe_strcpy(player.furniture[0], "简易床", 50);
+    safe_strcpy(player.furniture[1], "破旧椅子", 50);
     player.furniture_count = 2;
     
     // 初始物品
@@ -649,77 +673,81 @@ void init_tasks() {
         }
     }
     
-    // 基础任务
-    strcpy(tasks[0].name, "出租车司机");
+    // 任务1: 出租车司机
+    safe_strcpy(tasks[0].name, "出租车司机", 50);
     tasks[0].required_level = 1;
     tasks[0].base_income = 50;
     tasks[0].experience_gain = 10;
     tasks[0].energy_cost = 5;
     tasks[0].unlock_cost = 0;
     tasks[0].is_unlocked = true;
-    strcpy(tasks[0].description, "驾驶出租车接送客人");
+    safe_strcpy(tasks[0].description, "驾驶出租车接送客人", 150);
     tasks[0].success_rate = 0.9f;
     tasks[0].required_skills[0] = SKILL_SPEED;
     tasks[0].required_skill_level[0] = 0;
     
-    strcpy(tasks[1].name, "伐木工人");
+    // 任务2: 伐木工人
+    safe_strcpy(tasks[1].name, "伐木工人", 50);
     tasks[1].required_level = 2;
     tasks[1].base_income = 100;
     tasks[1].experience_gain = 20;
     tasks[1].energy_cost = 10;
     tasks[1].unlock_cost = 500;
-    strcpy(tasks[1].description, "在森林中砍伐树木");
+    safe_strcpy(tasks[1].description, "在森林中砍伐树木", 150);
     tasks[1].success_rate = 0.8f;
     tasks[1].required_skills[0] = SKILL_STRENGTH;
     tasks[1].required_skill_level[0] = 1;
     
-    strcpy(tasks[2].name, "外卖配送");
+    // 任务3: 外卖配送
+    safe_strcpy(tasks[2].name, "外卖配送", 50);
     tasks[2].required_level = 3;
     tasks[2].base_income = 200;
     tasks[2].experience_gain = 30;
     tasks[2].energy_cost = 15;
     tasks[2].unlock_cost = 2000;
-    strcpy(tasks[2].description, "配送外卖订单");
+    safe_strcpy(tasks[2].description, "配送外卖订单", 150);
     tasks[2].success_rate = 0.85f;
     tasks[2].required_skills[0] = SKILL_SPEED;
     tasks[2].required_skills[1] = SKILL_ENDURANCE;
     tasks[2].required_skill_level[0] = 1;
     tasks[2].required_skill_level[1] = 1;
     
-    // 中级任务
-    strcpy(tasks[3].name, "餐厅服务生");
+    // 任务4: 餐厅服务生
+    safe_strcpy(tasks[3].name, "餐厅服务生", 50);
     tasks[3].required_level = 5;
     tasks[3].base_income = 300;
     tasks[3].experience_gain = 40;
     tasks[3].energy_cost = 20;
     tasks[3].unlock_cost = 5000;
-    strcpy(tasks[3].description, "在高级餐厅服务");
+    safe_strcpy(tasks[3].description, "在高级餐厅服务", 150);
     tasks[3].success_rate = 0.75f;
     tasks[3].required_skills[0] = SKILL_CHARISMA;
     tasks[3].required_skills[1] = SKILL_SPEED;
     tasks[3].required_skill_level[0] = 2;
     tasks[3].required_skill_level[1] = 1;
     
-    strcpy(tasks[4].name, "程序员");
+    // 任务5: 程序员
+    safe_strcpy(tasks[4].name, "程序员", 50);
     tasks[4].required_level = 8;
     tasks[4].base_income = 500;
     tasks[4].experience_gain = 60;
     tasks[4].energy_cost = 25;
     tasks[4].unlock_cost = 10000;
-    strcpy(tasks[4].description, "编写软件代码");
+    safe_strcpy(tasks[4].description, "编写软件代码", 150);
     tasks[4].success_rate = 0.7f;
     tasks[4].required_skills[0] = SKILL_INTELLIGENCE;
     tasks[4].required_skills[1] = SKILL_CREATIVITY;
     tasks[4].required_skill_level[0] = 3;
     tasks[4].required_skill_level[1] = 2;
     
-    strcpy(tasks[5].name, "股票交易员");
+    // 任务6: 股票交易员
+    safe_strcpy(tasks[5].name, "股票交易员", 50);
     tasks[5].required_level = 10;
     tasks[5].base_income = 800;
     tasks[5].experience_gain = 80;
     tasks[5].energy_cost = 30;
     tasks[5].unlock_cost = 20000;
-    strcpy(tasks[5].description, "进行股票交易");
+    safe_strcpy(tasks[5].description, "进行股票交易", 150);
     tasks[5].success_rate = 0.6f;
     tasks[5].required_skills[0] = SKILL_INTELLIGENCE;
     tasks[5].required_skills[1] = SKILL_LUCK;
@@ -728,14 +756,14 @@ void init_tasks() {
     tasks[5].required_skill_level[1] = 3;
     tasks[5].required_skill_level[2] = 2;
     
-    // 高级任务
-    strcpy(tasks[6].name, "房地产经纪人");
+    // 任务7: 房地产经纪人
+    safe_strcpy(tasks[6].name, "房地产经纪人", 50);
     tasks[6].required_level = 15;
     tasks[6].base_income = 1200;
     tasks[6].experience_gain = 100;
     tasks[6].energy_cost = 35;
     tasks[6].unlock_cost = 50000;
-    strcpy(tasks[6].description, "销售高端房产");
+    safe_strcpy(tasks[6].description, "销售高端房产", 150);
     tasks[6].success_rate = 0.65f;
     tasks[6].required_skills[0] = SKILL_CHARISMA;
     tasks[6].required_skills[1] = SKILL_NEGOTIATION;
@@ -744,13 +772,14 @@ void init_tasks() {
     tasks[6].required_skill_level[1] = 4;
     tasks[6].required_skill_level[2] = 3;
     
-    strcpy(tasks[7].name, "企业家");
+    // 任务8: 企业家
+    safe_strcpy(tasks[7].name, "企业家", 50);
     tasks[7].required_level = 20;
     tasks[7].base_income = 2000;
     tasks[7].experience_gain = 150;
     tasks[7].energy_cost = 40;
     tasks[7].unlock_cost = 100000;
-    strcpy(tasks[7].description, "创办自己的企业");
+    safe_strcpy(tasks[7].description, "创办自己的企业", 150);
     tasks[7].success_rate = 0.55f;
     tasks[7].required_skills[0] = SKILL_LEADERSHIP;
     tasks[7].required_skills[1] = SKILL_MANAGEMENT;
@@ -759,13 +788,14 @@ void init_tasks() {
     tasks[7].required_skill_level[1] = 5;
     tasks[7].required_skill_level[2] = 4;
     
-    strcpy(tasks[8].name, "投资者");
+    // 任务9: 投资者
+    safe_strcpy(tasks[8].name, "投资者", 50);
     tasks[8].required_level = 25;
     tasks[8].base_income = 3000;
     tasks[8].experience_gain = 200;
     tasks[8].energy_cost = 45;
     tasks[8].unlock_cost = 200000;
-    strcpy(tasks[8].description, "投资创业公司");
+    safe_strcpy(tasks[8].description, "投资创业公司", 150);
     tasks[8].success_rate = 0.5f;
     tasks[8].required_skills[0] = SKILL_INTELLIGENCE;
     tasks[8].required_skills[1] = SKILL_LUCK;
@@ -774,14 +804,14 @@ void init_tasks() {
     tasks[8].required_skill_level[1] = 6;
     tasks[8].required_skill_level[2] = 5;
     
-    // 特殊任务
-    strcpy(tasks[9].name, "神秘探险");
+    // 任务10: 神秘探险
+    safe_strcpy(tasks[9].name, "神秘探险", 50);
     tasks[9].required_level = 30;
     tasks[9].base_income = 5000;
     tasks[9].experience_gain = 300;
     tasks[9].energy_cost = 50;
     tasks[9].unlock_cost = 500000;
-    strcpy(tasks[9].description, "探索未知领域");
+    safe_strcpy(tasks[9].description, "探索未知领域", 150);
     tasks[9].success_rate = 0.4f;
     tasks[9].required_skills[0] = SKILL_ENDURANCE;
     tasks[9].required_skills[1] = SKILL_LUCK;
@@ -798,372 +828,89 @@ void init_tasks() {
 }
 
 void init_market() {
-    // 家具类
-    strcpy(market[0].name, "电视");
-    market[0].price = 300;
-    market[0].value = 50;
-    market[0].rarity = RARITY_COMMON;
-    market[0].is_limited = false;
-    market[0].available_until = 0;
-    strcpy(market[0].description, "基本的娱乐设备");
-    market[0].passive_income = 0.1f;
-    market[0].required_level = 1;
-    market[0].boost_multiplier = 1.0f;
+    // 家具类物品
+    MarketItem items[] = {
+        {"电视", 300, 50, RARITY_COMMON, false, 0, "基本的娱乐设备", 0.1f, 1, 1.0f},
+        {"椅子", 100, 20, RARITY_COMMON, false, 0, "舒适的座椅", 0.05f, 1, 1.0f},
+        {"沙发", 500, 100, RARITY_UNCOMMON, false, 0, "豪华沙发", 0.2f, 3, 1.1f},
+        {"游泳池", 2000, 500, RARITY_RARE, false, 0, "私人游泳池", 0.5f, 10, 1.2f},
+        {"黄金马桶", 10000, 2000, RARITY_EPIC, false, 0, "奢华的马桶", 1.0f, 20, 1.3f},
+        {"名画", 1500, 300, RARITY_RARE, false, 0, "著名画作", 0.3f, 5, 1.15f},
+        {"水晶吊灯", 3000, 800, RARITY_EPIC, false, 0, "华丽的水晶灯", 0.6f, 15, 1.25f},
+        {"家庭影院", 5000, 1500, RARITY_EPIC, false, 0, "顶级影音系统", 0.8f, 18, 1.3f},
+        {"工作台", 800, 200, RARITY_UNCOMMON, false, 0, "提升工作效率", 0.25f, 5, 1.1f},
+        {"健身房", 2500, 600, RARITY_RARE, false, 0, "锻炼身体", 0.4f, 12, 1.2f},
+        {"游戏机", 600, 120, RARITY_UNCOMMON, false, 0, "娱乐游戏设备", 0.15f, 4, 1.05f},
+        {"按摩椅", 1200, 250, RARITY_RARE, false, 0, "放松身心", 0.35f, 8, 1.15f},
+        {"智能音箱", 200, 40, RARITY_COMMON, false, 0, "智能家居设备", 0.08f, 2, 1.02f},
+        {"空气净化器", 400, 80, RARITY_COMMON, false, 0, "净化空气", 0.12f, 3, 1.03f},
+        {"咖啡机", 350, 70, RARITY_COMMON, false, 0, "制作咖啡", 0.1f, 3, 1.03f},
+        {"书柜", 450, 90, RARITY_UNCOMMON, false, 0, "存放书籍", 0.14f, 4, 1.04f},
+        {"钢琴", 3000, 700, RARITY_RARE, false, 0, "音乐乐器", 0.5f, 12, 1.2f},
+        {"台球桌", 2000, 500, RARITY_RARE, false, 0, "娱乐设施", 0.4f, 10, 1.18f},
+        {"酒柜", 1500, 350, RARITY_UNCOMMON, false, 0, "存放美酒", 0.3f, 8, 1.12f},
+        {"保险箱", 800, 200, RARITY_UNCOMMON, false, 0, "存放贵重物品", 0.2f, 6, 1.08f}
+    };
     
-    strcpy(market[1].name, "椅子");
-    market[1].price = 100;
-    market[1].value = 20;
-    market[1].rarity = RARITY_COMMON;
-    market[1].is_limited = false;
-    market[1].available_until = 0;
-    strcpy(market[1].description, "舒适的座椅");
-    market[1].passive_income = 0.05f;
-    market[1].required_level = 1;
-    market[1].boost_multiplier = 1.0f;
-    
-    strcpy(market[2].name, "沙发");
-    market[2].price = 500;
-    market[2].value = 100;
-    market[2].rarity = RARITY_UNCOMMON;
-    market[2].is_limited = false;
-    market[2].available_until = 0;
-    strcpy(market[2].description, "豪华沙发");
-    market[2].passive_income = 0.2f;
-    market[2].required_level = 3;
-    market[2].boost_multiplier = 1.1f;
-    
-    strcpy(market[3].name, "游泳池");
-    market[3].price = 2000;
-    market[3].value = 500;
-    market[3].rarity = RARITY_RARE;
-    market[3].is_limited = false;
-    market[3].available_until = 0;
-    strcpy(market[3].description, "私人游泳池");
-    market[3].passive_income = 0.5f;
-    market[3].required_level = 10;
-    market[3].boost_multiplier = 1.2f;
-    
-    strcpy(market[4].name, "黄金马桶");
-    market[4].price = 10000;
-    market[4].value = 2000;
-    market[4].rarity = RARITY_EPIC;
-    market[4].is_limited = false;
-    market[4].available_until = 0;
-    strcpy(market[4].description, "奢华的马桶");
-    market[4].passive_income = 1.0f;
-    market[4].required_level = 20;
-    market[4].boost_multiplier = 1.3f;
-    
-    // 装饰类
-    strcpy(market[5].name, "名画");
-    market[5].price = 1500;
-    market[5].value = 300;
-    market[5].rarity = RARITY_RARE;
-    market[5].is_limited = false;
-    market[5].available_until = 0;
-    strcpy(market[5].description, "著名画作");
-    market[5].passive_income = 0.3f;
-    market[5].required_level = 5;
-    market[5].boost_multiplier = 1.15f;
-    
-    strcpy(market[6].name, "水晶吊灯");
-    market[6].price = 3000;
-    market[6].value = 800;
-    market[6].rarity = RARITY_EPIC;
-    market[6].is_limited = false;
-    market[6].available_until = 0;
-    strcpy(market[6].description, "华丽的水晶灯");
-    market[6].passive_income = 0.6f;
-    market[6].required_level = 15;
-    market[6].boost_multiplier = 1.25f;
-    
-    strcpy(market[7].name, "家庭影院");
-    market[7].price = 5000;
-    market[7].value = 1500;
-    market[7].rarity = RARITY_EPIC;
-    market[7].is_limited = false;
-    market[7].available_until = 0;
-    strcpy(market[7].description, "顶级影音系统");
-    market[7].passive_income = 0.8f;
-    market[7].required_level = 18;
-    market[7].boost_multiplier = 1.3f;
-    
-    // 功能类
-    strcpy(market[8].name, "工作台");
-    market[8].price = 800;
-    market[8].value = 200;
-    market[8].rarity = RARITY_UNCOMMON;
-    market[8].is_limited = false;
-    market[8].available_until = 0;
-    strcpy(market[8].description, "提升工作效率");
-    market[8].passive_income = 0.25f;
-    market[8].required_level = 5;
-    market[8].boost_multiplier = 1.1f;
-    
-    strcpy(market[9].name, "健身房");
-    market[9].price = 2500;
-    market[9].value = 600;
-    market[9].rarity = RARITY_RARE;
-    market[9].is_limited = false;
-    market[9].available_until = 0;
-    strcpy(market[9].description, "锻炼身体");
-    market[9].passive_income = 0.4f;
-    market[9].required_level = 12;
-    market[9].boost_multiplier = 1.2f;
-    
-    // 限定物品
-    strcpy(market[10].name, "圣诞树");
-    market[10].price = 1200;
-    market[10].value = 400;
-    market[10].rarity = RARITY_RARE;
-    market[10].is_limited = true;
-    market[10].available_until = time(NULL) + 2592000; // 30天
-    strcpy(market[10].description, "节日限定装饰");
-    market[10].passive_income = 0.35f;
-    market[10].required_level = 8;
-    market[10].boost_multiplier = 1.15f;
-    
-    strcpy(market[11].name, "龙年雕塑");
-    market[11].price = 3000;
-    market[11].value = 1000;
-    market[11].rarity = RARITY_EPIC;
-    market[11].is_limited = true;
-    market[11].available_until = time(NULL) + 31536000; // 365天
-    strcpy(market[11].description, "年度限定物品");
-    market[11].passive_income = 0.7f;
-    market[11].required_level = 25;
-    market[11].boost_multiplier = 1.3f;
-    
-    // 投资类
-    strcpy(market[12].name, "股票交易终端");
-    market[12].price = 5000;
-    market[12].value = 1000;
-    market[12].rarity = RARITY_RARE;
-    market[12].is_limited = false;
-    market[12].available_until = 0;
-    strcpy(market[12].description, "提升股票收益");
-    market[12].passive_income = 0.5f;
-    market[12].required_level = 20;
-    market[12].boost_multiplier = 1.25f;
-    
-    strcpy(market[13].name, "加密货币矿机");
-    market[13].price = 8000;
-    market[13].value = 2000;
-    market[13].rarity = RARITY_EPIC;
-    market[13].is_limited = false;
-    market[13].available_until = 0;
-    strcpy(market[13].description, "挖取数字货币");
-    market[13].passive_income = 1.0f;
-    market[13].required_level = 30;
-    market[13].boost_multiplier = 1.4f;
-    
-    // 收藏品类
-    strcpy(market[14].name, "古董花瓶");
-    market[14].price = 4000;
-    market[14].value = 1200;
-    market[14].rarity = RARITY_EPIC;
-    market[14].is_limited = false;
-    market[14].available_until = 0;
-    strcpy(market[14].description, "珍贵的古董");
-    market[14].passive_income = 0.6f;
-    market[14].required_level = 25;
-    market[14].boost_multiplier = 1.25f;
-    
-    strcpy(market[15].name, "限量版球鞋");
-    market[15].price = 2000;
-    market[15].value = 600;
-    market[15].rarity = RARITY_RARE;
-    market[15].is_limited = false;
-    market[15].available_until = 0;
-    strcpy(market[15].description, "潮流通货");
-    market[15].passive_income = 0.3f;
-    market[15].required_level = 15;
-    market[15].boost_multiplier = 1.15f;
+    int item_count = sizeof(items) / sizeof(items[0]);
+    for (int i = 0; i < item_count && i < MAX_MARKET; i++) {
+        market[i] = items[i];
+    }
 }
 
 void init_achievements() {
-    // 基础成就
-    strcpy(player.achievements[0].name, "第一桶金");
-    strcpy(player.achievements[0].description, "赚取100坤币");
-    player.achievements[0].condition = 100;
-    player.achievements[0].reward = 50;
-    player.achievements[0].reward_exp = 10;
-    player.achievements[0].unlocked = false;
+    Achievement achievements[] = {
+        {"第一桶金", "赚取100坤币", 100, 50, 10, false, 0},
+        {"家具收藏家", "收集5件家具", 5, 200, 20, false, 0},
+        {"打工达人", "完成50次任务", 50, 500, 50, false, 0},
+        {"股市之神", "股票投资获利1000坤币", 1000, 800, 80, false, 0},
+        {"幸运儿", "赢得彩票大奖", 1, 1000, 100, false, 0},
+        {"百万富翁", "拥有100万坤币", 1000000, 5000, 500, false, 0},
+        {"等级大师", "达到50级", 50, 2000, 200, false, 0},
+        {"技能专家", "将一项技能升到10级", 10, 1500, 150, false, 0},
+        {"任务狂人", "完成1000次任务", 1000, 3000, 300, false, 0},
+        {"社交达人", "拥有5个好友", 5, 1000, 100, false, 0},
+        {"宠物爱好者", "拥有3只宠物", 3, 1500, 150, false, 0},
+        {"房产大亨", "拥有5处房产", 5, 4000, 400, false, 0},
+        {"全技能大师", "所有技能达到5级", 5, 5000, 500, false, 0},
+        {"限定收藏家", "收集所有限定物品", 10, 6000, 600, false, 0},
+        {"成就猎人", "解锁20个成就", 20, 3000, 300, false, 0},
+        {"初次转生", "完成第一次声望重置", 1, 10000, 1000, false, 0},
+        {"传奇重生", "达到声望等级5", 5, 50000, 5000, false, 0},
+        {"BOSS克星", "击败10次BOSS", 10, 8000, 800, false, 0},
+        {"节日之魂", "参与5次节日活动", 5, 5000, 500, false, 0},
+        {"合成大师", "合成10次物品", 10, 3000, 300, false, 0}
+    };
     
-    strcpy(player.achievements[1].name, "家具收藏家");
-    strcpy(player.achievements[1].description, "收集5件家具");
-    player.achievements[1].condition = 5;
-    player.achievements[1].reward = 200;
-    player.achievements[1].reward_exp = 20;
-    player.achievements[1].unlocked = false;
-    
-    strcpy(player.achievements[2].name, "打工达人");
-    strcpy(player.achievements[2].description, "完成50次任务");
-    player.achievements[2].condition = 50;
-    player.achievements[2].reward = 500;
-    player.achievements[2].reward_exp = 50;
-    player.achievements[2].unlocked = false;
-    
-    strcpy(player.achievements[3].name, "股市之神");
-    strcpy(player.achievements[3].description, "股票投资获利1000坤币");
-    player.achievements[3].condition = 1000;
-    player.achievements[3].reward = 800;
-    player.achievements[3].reward_exp = 80;
-    player.achievements[3].unlocked = false;
-    
-    strcpy(player.achievements[4].name, "幸运儿");
-    strcpy(player.achievements[4].description, "赢得彩票大奖");
-    player.achievements[4].condition = 1;
-    player.achievements[4].reward = 1000;
-    player.achievements[4].reward_exp = 100;
-    player.achievements[4].unlocked = false;
-    
-    // 进度成就
-    strcpy(player.achievements[5].name, "百万富翁");
-    strcpy(player.achievements[5].description, "拥有100万坤币");
-    player.achievements[5].condition = 1000000;
-    player.achievements[5].reward = 5000;
-    player.achievements[5].reward_exp = 500;
-    player.achievements[5].unlocked = false;
-    
-    strcpy(player.achievements[6].name, "等级大师");
-    strcpy(player.achievements[6].description, "达到50级");
-    player.achievements[6].condition = 50;
-    player.achievements[6].reward = 2000;
-    player.achievements[6].reward_exp = 200;
-    player.achievements[6].unlocked = false;
-    
-    strcpy(player.achievements[7].name, "技能专家");
-    strcpy(player.achievements[7].description, "将一项技能升到10级");
-    player.achievements[7].condition = 10;
-    player.achievements[7].reward = 1500;
-    player.achievements[7].reward_exp = 150;
-    player.achievements[7].unlocked = false;
-    
-    strcpy(player.achievements[8].name, "任务狂人");
-    strcpy(player.achievements[8].description, "完成1000次任务");
-    player.achievements[8].condition = 1000;
-    player.achievements[8].reward = 3000;
-    player.achievements[8].reward_exp = 300;
-    player.achievements[8].unlocked = false;
-    
-    strcpy(player.achievements[9].name, "社交达人");
-    strcpy(player.achievements[9].description, "拥有5个好友");
-    player.achievements[9].condition = 5;
-    player.achievements[9].reward = 1000;
-    player.achievements[9].reward_exp = 100;
-    player.achievements[9].unlocked = false;
-    
-    // 收集成就
-    strcpy(player.achievements[10].name, "宠物爱好者");
-    strcpy(player.achievements[10].description, "拥有3只宠物");
-    player.achievements[10].condition = 3;
-    player.achievements[10].reward = 1500;
-    player.achievements[10].reward_exp = 150;
-    player.achievements[10].unlocked = false;
-    
-    strcpy(player.achievements[11].name, "房产大亨");
-    strcpy(player.achievements[11].description, "拥有5处房产");
-    player.achievements[11].condition = 5;
-    player.achievements[11].reward = 4000;
-    player.achievements[11].reward_exp = 400;
-    player.achievements[11].unlocked = false;
-    
-    strcpy(player.achievements[12].name, "全技能大师");
-    strcpy(player.achievements[12].description, "所有技能达到5级");
-    player.achievements[12].condition = 5;
-    player.achievements[12].reward = 5000;
-    player.achievements[12].reward_exp = 500;
-    player.achievements[12].unlocked = false;
-    
-    strcpy(player.achievements[13].name, "限定收藏家");
-    strcpy(player.achievements[13].description, "收集所有限定物品");
-    player.achievements[13].condition = 10;
-    player.achievements[13].reward = 6000;
-    player.achievements[13].reward_exp = 600;
-    player.achievements[13].unlocked = false;
-    
-    strcpy(player.achievements[14].name, "成就猎人");
-    strcpy(player.achievements[14].description, "解锁20个成就");
-    player.achievements[14].condition = 20;
-    player.achievements[14].reward = 3000;
-    player.achievements[14].reward_exp = 300;
-    player.achievements[14].unlocked = false;
-    
-    // 新增声望成就
-    strcpy(player.achievements[15].name, "初次转生");
-    strcpy(player.achievements[15].description, "完成第一次声望重置");
-    player.achievements[15].condition = 1;
-    player.achievements[15].reward = 10000;
-    player.achievements[15].reward_exp = 1000;
-    player.achievements[15].unlocked = false;
-    
-    strcpy(player.achievements[16].name, "传奇重生");
-    strcpy(player.achievements[16].description, "达到声望等级5");
-    player.achievements[16].condition = 5;
-    player.achievements[16].reward = 50000;
-    player.achievements[16].reward_exp = 5000;
-    player.achievements[16].unlocked = false;
-    
-    strcpy(player.achievements[17].name, "BOSS克星");
-    strcpy(player.achievements[17].description, "击败10次BOSS");
-    player.achievements[17].condition = 10;
-    player.achievements[17].reward = 8000;
-    player.achievements[17].reward_exp = 800;
-    player.achievements[17].unlocked = false;
-    
-    strcpy(player.achievements[18].name, "节日之魂");
-    strcpy(player.achievements[18].description, "参与5次节日活动");
-    player.achievements[18].condition = 5;
-    player.achievements[18].reward = 5000;
-    player.achievements[18].reward_exp = 500;
-    player.achievements[18].unlocked = false;
-    
-    strcpy(player.achievements[19].name, "合成大师");
-    strcpy(player.achievements[19].description, "合成10次物品");
-    player.achievements[19].condition = 10;
-    player.achievements[19].reward = 3000;
-    player.achievements[19].reward_exp = 300;
-    player.achievements[19].unlocked = false;
+    int ach_count = sizeof(achievements) / sizeof(achievements[0]);
+    for (int i = 0; i < ach_count && i < MAX_ACHIEVEMENTS; i++) {
+        player.achievements[i] = achievements[i];
+    }
 }
 
 void init_skills() {
+    const char* skill_names[] = {"速度", "力量", "智力", "幸运", "魅力", "耐力", "创造力", "领导力", "谈判技巧", "管理能力"};
+    const char* skill_descs[] = {
+        "提升任务完成速度",
+        "增加体力相关任务收入",
+        "增加智力相关任务收入",
+        "增加所有随机事件几率",
+        "提升社交任务收入",
+        "降低任务能量消耗",
+        "提升创意任务收入",
+        "提升团队任务收入",
+        "提升交易收益",
+        "提升被动收入"
+    };
+    
     for (int i = 0; i < MAX_SKILLS; i++) {
         player.skills[i].level = 1;
         player.skills[i].experience = 0;
         player.skills[i].max_level = 20;
         player.skills[i].multiplier = 1.05f;
+        safe_strcpy(player.skills[i].name, skill_names[i], 30);
+        safe_strcpy(player.skills[i].description, skill_descs[i], 100);
     }
-    
-    strcpy(player.skills[SKILL_SPEED].name, "速度");
-    strcpy(player.skills[SKILL_SPEED].description, "提升任务完成速度");
-    
-    strcpy(player.skills[SKILL_STRENGTH].name, "力量");
-    strcpy(player.skills[SKILL_STRENGTH].description, "增加体力相关任务收入");
-    
-    strcpy(player.skills[SKILL_INTELLIGENCE].name, "智力");
-    strcpy(player.skills[SKILL_INTELLIGENCE].description, "增加智力相关任务收入");
-    
-    strcpy(player.skills[SKILL_LUCK].name, "幸运");
-    strcpy(player.skills[SKILL_LUCK].description, "增加所有随机事件几率");
-    
-    strcpy(player.skills[SKILL_CHARISMA].name, "魅力");
-    strcpy(player.skills[SKILL_CHARISMA].description, "提升社交任务收入");
-    
-    strcpy(player.skills[SKILL_ENDURANCE].name, "耐力");
-    strcpy(player.skills[SKILL_ENDURANCE].description, "降低任务能量消耗");
-    
-    strcpy(player.skills[SKILL_CREATIVITY].name, "创造力");
-    strcpy(player.skills[SKILL_CREATIVITY].description, "提升创意任务收入");
-    
-    strcpy(player.skills[SKILL_LEADERSHIP].name, "领导力");
-    strcpy(player.skills[SKILL_LEADERSHIP].description, "提升团队任务收入");
-    
-    strcpy(player.skills[SKILL_NEGOTIATION].name, "谈判技巧");
-    strcpy(player.skills[SKILL_NEGOTIATION].description, "提升交易收益");
-    
-    strcpy(player.skills[SKILL_MANAGEMENT].name, "管理能力");
-    strcpy(player.skills[SKILL_MANAGEMENT].description, "提升被动收入");
 }
 
 void init_quests() {
@@ -1174,8 +921,8 @@ void init_quests() {
     time_t now = time(NULL);
     
     // 每日任务
-    strcpy(player.active_quests[0].name, "完成3个任务");
-    strcpy(player.active_quests[0].description, "完成任意3个任务");
+    safe_strcpy(player.active_quests[0].name, "完成3个任务", 50);
+    safe_strcpy(player.active_quests[0].description, "完成任意3个任务", 200);
     player.active_quests[0].type = QUEST_DAILY;
     player.active_quests[0].requirement = 3;
     player.active_quests[0].reward_coins = 300;
@@ -1183,8 +930,8 @@ void init_quests() {
     player.active_quests[0].assigned_time = now;
     player.active_quests[0].deadline = now + 86400;
     
-    strcpy(player.active_quests[1].name, "购买家具");
-    strcpy(player.active_quests[1].description, "购买任意一件家具");
+    safe_strcpy(player.active_quests[1].name, "购买家具", 50);
+    safe_strcpy(player.active_quests[1].description, "购买任意一件家具", 200);
     player.active_quests[1].type = QUEST_DAILY;
     player.active_quests[1].requirement = 1;
     player.active_quests[1].reward_coins = 200;
@@ -1192,8 +939,8 @@ void init_quests() {
     player.active_quests[1].assigned_time = now;
     player.active_quests[1].deadline = now + 86400;
     
-    strcpy(player.active_quests[2].name, "投资股票");
-    strcpy(player.active_quests[2].description, "进行一次股票投资");
+    safe_strcpy(player.active_quests[2].name, "投资股票", 50);
+    safe_strcpy(player.active_quests[2].description, "进行一次股票投资", 200);
     player.active_quests[2].type = QUEST_DAILY;
     player.active_quests[2].requirement = 1;
     player.active_quests[2].reward_coins = 400;
@@ -1202,8 +949,8 @@ void init_quests() {
     player.active_quests[2].deadline = now + 86400;
     
     // 每周任务
-    strcpy(player.active_quests[3].name, "赚取1万坤币");
-    strcpy(player.active_quests[3].description, "一周内赚取10000坤币");
+    safe_strcpy(player.active_quests[3].name, "赚取1万坤币", 50);
+    safe_strcpy(player.active_quests[3].description, "一周内赚取10000坤币", 200);
     player.active_quests[3].type = QUEST_WEEKLY;
     player.active_quests[3].requirement = 10000;
     player.active_quests[3].reward_coins = 2000;
@@ -1211,8 +958,8 @@ void init_quests() {
     player.active_quests[3].assigned_time = now;
     player.active_quests[3].deadline = now + 604800;
     
-    strcpy(player.active_quests[4].name, "升级技能");
-    strcpy(player.active_quests[4].description, "升级任意技能3次");
+    safe_strcpy(player.active_quests[4].name, "升级技能", 50);
+    safe_strcpy(player.active_quests[4].description, "升级任意技能3次", 200);
     player.active_quests[4].type = QUEST_WEEKLY;
     player.active_quests[4].requirement = 3;
     player.active_quests[4].reward_coins = 1500;
@@ -1221,17 +968,17 @@ void init_quests() {
     player.active_quests[4].deadline = now + 604800;
     
     // 主线任务
-    strcpy(player.active_quests[5].name, "成为百万富翁");
-    strcpy(player.active_quests[5].description, "积累100万坤币");
+    safe_strcpy(player.active_quests[5].name, "成为百万富翁", 50);
+    safe_strcpy(player.active_quests[5].description, "积累100万坤币", 200);
     player.active_quests[5].type = QUEST_MAIN;
     player.active_quests[5].requirement = 1000000;
     player.active_quests[5].reward_coins = 10000;
     player.active_quests[5].reward_exp = 1000;
     player.active_quests[5].assigned_time = now;
-    player.active_quests[5].deadline = 0; // 无期限
+    player.active_quests[5].deadline = 0;
     
-    strcpy(player.active_quests[6].name, "建立公司");
-    strcpy(player.active_quests[6].description, "将公司升到5级");
+    safe_strcpy(player.active_quests[6].name, "建立公司", 50);
+    safe_strcpy(player.active_quests[6].description, "将公司升到5级", 200);
     player.active_quests[6].type = QUEST_MAIN;
     player.active_quests[6].requirement = 5;
     player.active_quests[6].reward_coins = 5000;
@@ -1240,8 +987,8 @@ void init_quests() {
     player.active_quests[6].deadline = 0;
     
     // 特殊任务
-    strcpy(player.active_quests[7].name, "击败BOSS");
-    strcpy(player.active_quests[7].description, "首次击败挑战BOSS");
+    safe_strcpy(player.active_quests[7].name, "击败BOSS", 50);
+    safe_strcpy(player.active_quests[7].description, "首次击败挑战BOSS", 200);
     player.active_quests[7].type = QUEST_SPECIAL;
     player.active_quests[7].requirement = 1;
     player.active_quests[7].reward_coins = 5000;
@@ -1249,8 +996,8 @@ void init_quests() {
     player.active_quests[7].assigned_time = now;
     player.active_quests[7].deadline = 0;
     
-    strcpy(player.active_quests[8].name, "节日参与");
-    strcpy(player.active_quests[8].description, "参与一次节日活动");
+    safe_strcpy(player.active_quests[8].name, "节日参与", 50);
+    safe_strcpy(player.active_quests[8].description, "参与一次节日活动", 200);
     player.active_quests[8].type = QUEST_SPECIAL;
     player.active_quests[8].requirement = 1;
     player.active_quests[8].reward_coins = 3000;
@@ -1258,8 +1005,8 @@ void init_quests() {
     player.active_quests[8].assigned_time = now;
     player.active_quests[8].deadline = 0;
     
-    strcpy(player.active_quests[9].name, "声望之路");
-    strcpy(player.active_quests[9].description, "完成第一次声望重置");
+    safe_strcpy(player.active_quests[9].name, "声望之路", 50);
+    safe_strcpy(player.active_quests[9].description, "完成第一次声望重置", 200);
     player.active_quests[9].type = QUEST_SPECIAL;
     player.active_quests[9].requirement = 1;
     player.active_quests[9].reward_coins = 10000;
@@ -1269,282 +1016,160 @@ void init_quests() {
 }
 
 void init_pets() {
+    const char* pet_names[] = {"小咪", "旺财", "小鹦", "小焰", "凤儿"};
+    float pet_bonus[] = {1.05f, 1.08f, 1.10f, 1.15f, 1.20f};
+    
     for (int i = 0; i < MAX_PETS; i++) {
+        player.pets[i].type = (PetType)i;
         player.pets[i].is_unlocked = false;
         player.pets[i].happiness = 100;
         player.pets[i].hunger = 100;
         player.pets[i].level = 1;
         player.pets[i].experience = 0;
-        player.pets[i].bonus_multiplier = 1.0f;
+        player.pets[i].bonus_multiplier = pet_bonus[i];
         player.pets[i].last_fed = time(NULL);
-        strcpy(player.pets[i].name, "");
+        safe_strcpy(player.pets[i].name, pet_names[i], 30);
     }
     
-    player.pets[0].type = PET_CAT;
-    player.pets[1].type = PET_DOG;
-    player.pets[2].type = PET_PARROT;
-    player.pets[3].type = PET_DRAGON;
-    player.pets[4].type = PET_PHOENIX;
-    
-    // 解锁初始宠物
+    // 解锁初始宠物（猫）
     player.pets[0].is_unlocked = true;
-    strcpy(player.pets[0].name, "小咪");
-    player.pets[0].bonus_multiplier = 1.1f;
     player.pet_count = 1;
 }
 
 void init_company_levels() {
-    strcpy(player.company_levels[0].name, "个体户");
-    player.company_levels[0].level = 1;
-    player.company_levels[0].required_coins = 0;
-    player.company_levels[0].income_multiplier = 1.0f;
-    player.company_levels[0].unlock_skill_points = 0;
-    strcpy(player.company_levels[0].description, "独自经营的小生意");
+    const char* company_names[] = {"个体户", "小微企业", "小型公司", "中型企业", "大型公司", 
+                                    "集团公司", "上市公司", "跨国企业", "商业帝国", "传奇财团"};
+    const char* company_descs[] = {
+        "独自经营的小生意",
+        "雇佣1-2名员工",
+        "拥有小型办公室",
+        "在写字楼有办公室",
+        "拥有自己的办公楼",
+        "业务多元化发展",
+        "在证券交易所上市",
+        "业务遍布全球",
+        "影响世界经济",
+        "掌控全球经济命脉"
+    };
+    money_t required_coins[] = {0, 5000, 20000, 100000, 500000, 2000000, 10000000, 50000000, 200000000, 1000000000LL};
+    float income_multipliers[] = {1.0f, 1.2f, 1.5f, 2.0f, 3.0f, 5.0f, 8.0f, 12.0f, 20.0f, 50.0f};
+    int skill_points[] = {0, 1, 2, 3, 5, 8, 12, 18, 25, 35};
     
-    strcpy(player.company_levels[1].name, "小微企业");
-    player.company_levels[1].level = 2;
-    player.company_levels[1].required_coins = 5000;
-    player.company_levels[1].income_multiplier = 1.2f;
-    player.company_levels[1].unlock_skill_points = 1;
-    strcpy(player.company_levels[1].description, "雇佣1-2名员工");
-    
-    strcpy(player.company_levels[2].name, "小型公司");
-    player.company_levels[2].level = 3;
-    player.company_levels[2].required_coins = 20000;
-    player.company_levels[2].income_multiplier = 1.5f;
-    player.company_levels[2].unlock_skill_points = 2;
-    strcpy(player.company_levels[2].description, "拥有小型办公室");
-    
-    strcpy(player.company_levels[3].name, "中型企业");
-    player.company_levels[3].level = 4;
-    player.company_levels[3].required_coins = 100000;
-    player.company_levels[3].income_multiplier = 2.0f;
-    player.company_levels[3].unlock_skill_points = 3;
-    strcpy(player.company_levels[3].description, "在写字楼有办公室");
-    
-    strcpy(player.company_levels[4].name, "大型公司");
-    player.company_levels[4].level = 5;
-    player.company_levels[4].required_coins = 500000;
-    player.company_levels[4].income_multiplier = 3.0f;
-    player.company_levels[4].unlock_skill_points = 5;
-    strcpy(player.company_levels[4].description, "拥有自己的办公楼");
-    
-    strcpy(player.company_levels[5].name, "集团公司");
-    player.company_levels[5].level = 6;
-    player.company_levels[5].required_coins = 2000000;
-    player.company_levels[5].income_multiplier = 5.0f;
-    player.company_levels[5].unlock_skill_points = 8;
-    strcpy(player.company_levels[5].description, "业务多元化发展");
-    
-    strcpy(player.company_levels[6].name, "上市公司");
-    player.company_levels[6].level = 7;
-    player.company_levels[6].required_coins = 10000000;
-    player.company_levels[6].income_multiplier = 8.0f;
-    player.company_levels[6].unlock_skill_points = 12;
-    strcpy(player.company_levels[6].description, "在证券交易所上市");
-    
-    strcpy(player.company_levels[7].name, "跨国企业");
-    player.company_levels[7].level = 8;
-    player.company_levels[7].required_coins = 50000000;
-    player.company_levels[7].income_multiplier = 12.0f;
-    player.company_levels[7].unlock_skill_points = 18;
-    strcpy(player.company_levels[7].description, "业务遍布全球");
-    
-    strcpy(player.company_levels[8].name, "商业帝国");
-    player.company_levels[8].level = 9;
-    player.company_levels[8].required_coins = 200000000;
-    player.company_levels[8].income_multiplier = 20.0f;
-    player.company_levels[8].unlock_skill_points = 25;
-    strcpy(player.company_levels[8].description, "影响世界经济");
-    
-    strcpy(player.company_levels[9].name, "传奇财团");
-    player.company_levels[9].level = 10;
-    player.company_levels[9].required_coins = 1000000000;
-    player.company_levels[9].income_multiplier = 50.0f;
-    player.company_levels[9].unlock_skill_points = 35;
-    strcpy(player.company_levels[9].description, "掌控全球经济命脉");
+    for (int i = 0; i < MAX_COMPANY_LEVELS; i++) {
+        safe_strcpy(player.company_levels[i].name, company_names[i], 30);
+        safe_strcpy(player.company_levels[i].description, company_descs[i], 100);
+        player.company_levels[i].level = i + 1;
+        player.company_levels[i].required_coins = required_coins[i];
+        player.company_levels[i].income_multiplier = income_multipliers[i];
+        player.company_levels[i].unlock_skill_points = skill_points[i];
+    }
     
     player.current_company_level = 0;
 }
 
 void init_stocks() {
-    strcpy(player.stocks[0].name, "坤坤科技");
-    player.stocks[0].base_price = 100;
-    player.stocks[0].current_price = 100;
-    player.stocks[0].price_change = 0;
-    player.stocks[0].volatility = 10;
-    player.stocks[0].last_update = time(NULL);
-    
-    strcpy(player.stocks[1].name, "外卖速递");
-    player.stocks[1].base_price = 50;
-    player.stocks[1].current_price = 50;
-    player.stocks[1].price_change = 0;
-    player.stocks[1].volatility = 15;
-    player.stocks[1].last_update = time(NULL);
-    
-    strcpy(player.stocks[2].name, "房地产集团");
-    player.stocks[2].base_price = 200;
-    player.stocks[2].current_price = 200;
-    player.stocks[2].price_change = 0;
-    player.stocks[2].volatility = 8;
-    player.stocks[2].last_update = time(NULL);
-    
-    strcpy(player.stocks[3].name, "能源公司");
-    player.stocks[3].base_price = 150;
-    player.stocks[3].current_price = 150;
-    player.stocks[3].price_change = 0;
-    player.stocks[3].volatility = 12;
-    player.stocks[3].last_update = time(NULL);
-    
-    strcpy(player.stocks[4].name, "娱乐传媒");
-    player.stocks[4].base_price = 80;
-    player.stocks[4].current_price = 80;
-    player.stocks[4].price_change = 0;
-    player.stocks[4].volatility = 20;
-    player.stocks[4].last_update = time(NULL);
+    const char* stock_names[] = {"坤坤科技", "外卖速递", "房地产集团", "能源公司", "娱乐传媒"};
+    int base_prices[] = {100, 50, 200, 150, 80};
+    int volatilities[] = {10, 15, 8, 12, 20};
     
     for (int i = 0; i < 5; i++) {
+        safe_strcpy(player.stocks[i].name, stock_names[i], 50);
+        player.stocks[i].base_price = base_prices[i];
+        player.stocks[i].current_price = base_prices[i];
+        player.stocks[i].price_change = 0;
+        player.stocks[i].volatility = volatilities[i];
+        player.stocks[i].last_update = time(NULL);
         player.invested_stocks[i] = 0;
     }
 }
 
 void init_properties() {
-    strcpy(available_properties[0].name, "公寓");
-    strcpy(available_properties[0].description, "小型公寓，适合单身");
-    available_properties[0].coins_needed = 50000;
-    available_properties[0].days_needed = 30;
-    available_properties[0].passive_income = 50;
-    available_properties[0].unlock_achievement_id = 1;
-    available_properties[0].owned = false;
+    const char* prop_names[] = {"公寓", "别墅", "写字楼", "购物中心", "酒店", "度假村", "私人岛屿", "商业街", "科技园区", "国际机场"};
+    const char* prop_descs[] = {
+        "小型公寓，适合单身",
+        "带花园的独栋别墅",
+        "商业办公大楼",
+        "大型商业综合体",
+        "五星级豪华酒店",
+        "海滨度假胜地",
+        "专属私人岛屿",
+        "整条商业街道",
+        "高科技产业园区",
+        "大型国际机场"
+    };
+    money_t prop_costs[] = {50000, 200000, 1000000, 5000000, 20000000, 50000000, 200000000, 500000000, 2000000000LL, 10000000000LL};
+    int prop_days[] = {30, 60, 120, 180, 240, 300, 365, 450, 540, 720};
+    float prop_incomes[] = {50, 200, 1000, 5000, 20000, 50000, 200000, 500000, 2000000, 10000000};
+    int ach_ids[] = {1, 5, 10, 15, 20, 25, 30, 35, 40, 50};
     
-    strcpy(available_properties[1].name, "别墅");
-    strcpy(available_properties[1].description, "带花园的独栋别墅");
-    available_properties[1].coins_needed = 200000;
-    available_properties[1].days_needed = 60;
-    available_properties[1].passive_income = 200;
-    available_properties[1].unlock_achievement_id = 5;
-    available_properties[1].owned = false;
-    
-    strcpy(available_properties[2].name, "写字楼");
-    strcpy(available_properties[2].description, "商业办公大楼");
-    available_properties[2].coins_needed = 1000000;
-    available_properties[2].days_needed = 120;
-    available_properties[2].passive_income = 1000;
-    available_properties[2].unlock_achievement_id = 10;
-    available_properties[2].owned = false;
-    
-    strcpy(available_properties[3].name, "购物中心");
-    strcpy(available_properties[3].description, "大型商业综合体");
-    available_properties[3].coins_needed = 5000000;
-    available_properties[3].days_needed = 180;
-    available_properties[3].passive_income = 5000;
-    available_properties[3].unlock_achievement_id = 15;
-    available_properties[3].owned = false;
-    
-    strcpy(available_properties[4].name, "酒店");
-    strcpy(available_properties[4].description, "五星级豪华酒店");
-    available_properties[4].coins_needed = 20000000;
-    available_properties[4].days_needed = 240;
-    available_properties[4].passive_income = 20000;
-    available_properties[4].unlock_achievement_id = 20;
-    available_properties[4].owned = false;
-    
-    strcpy(available_properties[5].name, "度假村");
-    strcpy(available_properties[5].description, "海滨度假胜地");
-    available_properties[5].coins_needed = 50000000;
-    available_properties[5].days_needed = 300;
-    available_properties[5].passive_income = 50000;
-    available_properties[5].unlock_achievement_id = 25;
-    available_properties[5].owned = false;
-    
-    strcpy(available_properties[6].name, "私人岛屿");
-    strcpy(available_properties[6].description, "专属私人岛屿");
-    available_properties[6].coins_needed = 200000000;
-    available_properties[6].days_needed = 365;
-    available_properties[6].passive_income = 200000;
-    available_properties[6].unlock_achievement_id = 30;
-    available_properties[6].owned = false;
-    
-    strcpy(available_properties[7].name, "商业街");
-    strcpy(available_properties[7].description, "整条商业街道");
-    available_properties[7].coins_needed = 500000000;
-    available_properties[7].days_needed = 450;
-    available_properties[7].passive_income = 500000;
-    available_properties[7].unlock_achievement_id = 35;
-    available_properties[7].owned = false;
-    
-    strcpy(available_properties[8].name, "科技园区");
-    strcpy(available_properties[8].description, "高科技产业园区");
-    available_properties[8].coins_needed = 2000000000;
-    available_properties[8].days_needed = 540;
-    available_properties[8].passive_income = 2000000;
-    available_properties[8].unlock_achievement_id = 40;
-    available_properties[8].owned = false;
-    
-    strcpy(available_properties[9].name, "国际机场");
-    strcpy(available_properties[9].description, "大型国际机场");
-    available_properties[9].coins_needed = 10000000000LL;
-    available_properties[9].days_needed = 720;
-    available_properties[9].passive_income = 10000000;
-    available_properties[9].unlock_achievement_id = 50;
-    available_properties[9].owned = false;
+    for (int i = 0; i < 10; i++) {
+        safe_strcpy(available_properties[i].name, prop_names[i], 30);
+        safe_strcpy(available_properties[i].description, prop_descs[i], 100);
+        available_properties[i].coins_needed = prop_costs[i];
+        available_properties[i].days_needed = prop_days[i];
+        available_properties[i].passive_income = prop_incomes[i];
+        available_properties[i].unlock_achievement_id = ach_ids[i];
+        available_properties[i].owned = false;
+    }
 }
 
 void init_friends() {
-    // 初始化好友池，使用 const char* 避免警告
     const char* names[] = {"小明", "小红", "小刚", "李华", "王芳", "张伟", "刘洋", "陈静", "赵磊", "周梅"};
+    
     for (int i = 0; i < MAX_FRIENDS; i++) {
-        strcpy(random_friends[i].username, names[i % 10]);
-        random_friends[i].level = 1 + rand() % 50;
-        random_friends[i].is_online = rand() % 2;
-        random_friends[i].last_online = time(NULL) - rand() % 86400;
-        random_friends[i].friendship_level = (float)(rand() % 100) / 10;
-        random_friends[i].is_friend = false;
+        safe_strcpy(potential_friends[i].username, names[i % 10], 30);
+        potential_friends[i].level = 1 + rand() % 50;
+        potential_friends[i].is_online = rand() % 2;
+        potential_friends[i].last_online = time(NULL) - rand() % 86400;
+        potential_friends[i].friendship_level = (float)(rand() % 100) / 10;
+        potential_friends[i].is_friend = false;
     }
 }
 
 //================ 存档系统 ================
 void save_game() {
-    FILE *file = fopen(SAVE_FILE, "wb");
+    FILE* file = fopen(SAVE_FILE, "wb");
     if (file) {
+        // 写入版本号
+        int version = SAVE_VERSION;
+        fwrite(&version, sizeof(int), 1, file);
         fwrite(&player, sizeof(Player), 1, file);
         fclose(file);
-        print_colored(COLOR_GREEN, "? 游戏存档已保存！\n");
+        print_colored(COLOR_GREEN, "\n?? 游戏存档已保存！\n");
     } else {
-        print_colored(COLOR_RED, "? 保存失败！\n");
+        print_colored(COLOR_RED, "\n? 保存失败！\n");
     }
 }
 
 void load_game() {
-    FILE *file = fopen(SAVE_FILE, "rb");
+    FILE* file = fopen(SAVE_FILE, "rb");
     if (file) {
-        fread(&player, sizeof(Player), 1, file);
+        int version;
+        fread(&version, sizeof(int), 1, file);
+        if (version == SAVE_VERSION) {
+            fread(&player, sizeof(Player), 1, file);
+            print_colored(COLOR_GREEN, "\n?? 游戏存档已加载！\n");
+        } else {
+            print_colored(COLOR_YELLOW, "\n?? 存档版本不兼容，将开始新游戏...\n");
+        }
         fclose(file);
-        print_colored(COLOR_GREEN, "? 游戏存档已加载！\n");
     } else {
-        print_colored(COLOR_YELLOW, "? 未找到存档，开始新游戏...\n");
+        print_colored(COLOR_YELLOW, "\n?? 未找到存档，开始新游戏...\n");
     }
 }
 
 //================ 事件系统 ================
 const char* get_event_name(EventType type) {
-    static const char* names[] = {
-        "无",
-        "通货膨胀",
-        "股市大涨",
-        "任务奖励",
-        "免费家具",
-        "彩票加成",
-        "双倍经验",
-        "神秘宝箱",
-        "BOSS挑战",
-        "节日庆典"
+    const char* names[] = {
+        "无", "通货膨胀", "股市大涨", "任务奖励", "免费家具",
+        "彩票加成", "双倍经验", "神秘宝箱", "BOSS挑战", "节日庆典"
     };
+    if (type < 0 || type >= EVENT_TYPE_COUNT) return "未知";
     return names[type];
 }
 
 const char* get_event_description(EventType type) {
-    static const char* descriptions[] = {
+    const char* descriptions[] = {
         "无事件发生",
         "所有物品价格上涨20%",
         "股票收益增加30%",
@@ -1556,20 +1181,18 @@ const char* get_event_description(EventType type) {
         "挑战特殊BOSS获得大量奖励",
         "节日期间所有活动奖励增加"
     };
+    if (type < 0 || type >= EVENT_TYPE_COUNT) return "";
     return descriptions[type];
 }
 
 void random_event() {
-    if ((rand() % 100) < 15) {
+    // 15%概率触发事件
+    if ((rand() % 100) < 15 && player.active_event == EVENT_NONE) {
         EventType new_event = (EventType)(1 + rand() % (EVENT_TYPE_COUNT - 1));
-        
-        if (player.active_event != EVENT_NONE) {
-            end_event(player.active_event);
-        }
-        
         trigger_event(new_event);
         print_colored(COLOR_MAGENTA, "\n?? 随机事件触发：%s！\n", get_event_name(new_event));
         print_colored(COLOR_CYAN, "   %s\n", get_event_description(new_event));
+        press_any_key();
     }
 }
 
@@ -1577,58 +1200,44 @@ void trigger_event(EventType type) {
     player.active_event = type;
     player.event_end_time = time(NULL) + 300; // 5分钟
     
-    switch (type) {
-        case EVENT_FESTIVAL:
-            player.festival_participations++;
-            break;
-        case EVENT_BOSS_CHALLENGE:
-            player.boss_defeats++;
-            break;
-        default:
-            break;
-    }
-    
     handle_event_effect(type, true);
 }
 
-void end_event(EventType type) {
-    handle_event_effect(type, false);
-    player.active_event = EVENT_NONE;
-    print_colored(COLOR_CYAN, "\n? 事件结束：%s\n", get_event_name(type));
+void end_event() {
+    if (player.active_event != EVENT_NONE) {
+        handle_event_effect(player.active_event, false);
+        print_colored(COLOR_CYAN, "\n? 事件结束：%s\n", get_event_name(player.active_event));
+        player.active_event = EVENT_NONE;
+        player.event_end_time = 0;
+    }
 }
 
 void handle_event_effect(EventType type, bool apply) {
     static int original_prices[MAX_MARKET] = {0};
+    static bool prices_saved = false;
     
     switch(type) {
         case EVENT_INFLATION:
-            if (apply) {
+            if (apply && !prices_saved) {
                 for (int i = 0; i < MAX_MARKET; i++) {
                     original_prices[i] = market[i].price;
-                    market[i].price = (int)(market[i].price * 1.2);
+                    market[i].price = (int)(market[i].price * 1.2f);
                 }
-            } else {
+                prices_saved = true;
+            } else if (!apply && prices_saved) {
                 for (int i = 0; i < MAX_MARKET; i++) {
                     market[i].price = original_prices[i];
                 }
+                prices_saved = false;
             }
-            break;
-        case EVENT_STOCK_BOOM:
-            // 在计算股票收益时处理
-            break;
-        case EVENT_TASK_BONUS:
-            // 在任务收入计算中处理
             break;
         case EVENT_FREE_FURNITURE:
             if (apply && player.furniture_count < MAX_FURNITURE) {
-                const char* free_furniture[] = {"神秘宝箱", "幸运地毯", "祝福花瓶"};
-                int idx = rand() % 3;
-                strcpy(player.furniture[player.furniture_count++], free_furniture[idx]);
+                const char* free_furniture[] = {"神秘宝箱", "幸运地毯", "祝福花瓶", "招财猫"};
+                int idx = rand() % 4;
+                safe_strcpy(player.furniture[player.furniture_count++], free_furniture[idx], 50);
                 print_colored(COLOR_GREEN, "   ?? 获得免费家具：%s！\n", free_furniture[idx]);
             }
-            break;
-        case EVENT_DOUBLE_EXP:
-            // 在任务经验计算中处理
             break;
         case EVENT_MYSTERY_BOX:
             if (apply) {
@@ -1636,8 +1245,15 @@ void handle_event_effect(EventType type, bool apply) {
                 print_colored(COLOR_GREEN, "   ?? 获得2把神秘钥匙！\n");
             }
             break;
-        case EVENT_LOTTERY_BONUS:
-            // 在彩票中计算中处理
+        case EVENT_BOSS_CHALLENGE:
+            if (apply) {
+                print_colored(COLOR_YELLOW, "   ?? 强大的BOSS出现了！挑战成功可获得丰厚奖励！\n");
+            }
+            break;
+        case EVENT_FESTIVAL:
+            if (apply) {
+                print_colored(COLOR_YELLOW, "   ?? 节日庆典开始！参与活动获得双倍奖励！\n");
+            }
             break;
         default:
             break;
@@ -1652,7 +1268,7 @@ void show_active_events() {
             printf("   剩余时间：%ld秒\n", remaining);
             printf("   效果：%s\n", get_event_description(player.active_event));
         } else {
-            end_event(player.active_event);
+            end_event();
         }
     }
 }
@@ -1665,27 +1281,14 @@ void check_achievements() {
         bool condition_met = false;
         
         switch(i) {
-            case 0:
-                condition_met = player.kun_coins >= 100;
-                break;
-            case 1:
-                condition_met = player.furniture_count >= 5;
-                break;
-            case 2:
-                condition_met = player.lifetime_task_completions >= 50;
-                break;
-            case 3:
-                condition_met = player.total_income - player.total_expenses >= 1000;
-                break;
-            case 4: // 彩票中奖在开奖时解锁
-                break;
-            case 5:
-                condition_met = player.kun_coins >= 1000000;
-                break;
-            case 6:
-                condition_met = player.level >= 50;
-                break;
-            case 7:
+            case 0: condition_met = player.kun_coins >= 100; break;
+            case 1: condition_met = player.furniture_count >= 5; break;
+            case 2: condition_met = player.lifetime_task_completions >= 50; break;
+            case 3: condition_met = (player.total_income - player.total_expenses) >= 1000; break;
+            case 4: condition_met = false; break; // 彩票中奖单独触发
+            case 5: condition_met = player.kun_coins >= 1000000; break;
+            case 6: condition_met = player.level >= 50; break;
+            case 7: {
                 for (int j = 0; j < MAX_SKILLS; j++) {
                     if (player.skills[j].level >= 10) {
                         condition_met = true;
@@ -1693,19 +1296,12 @@ void check_achievements() {
                     }
                 }
                 break;
-            case 8:
-                condition_met = player.lifetime_task_completions >= 1000;
-                break;
-            case 9:
-                condition_met = player.friend_count >= 5;
-                break;
-            case 10:
-                condition_met = player.pet_count >= 3;
-                break;
-            case 11:
-                condition_met = player.property_count >= 5;
-                break;
-            case 12:
+            }
+            case 8: condition_met = player.lifetime_task_completions >= 1000; break;
+            case 9: condition_met = player.friend_count >= 5; break;
+            case 10: condition_met = player.pet_count >= 3; break;
+            case 11: condition_met = player.property_count >= 5; break;
+            case 12: {
                 condition_met = true;
                 for (int j = 0; j < MAX_SKILLS; j++) {
                     if (player.skills[j].level < 5) {
@@ -1714,33 +1310,21 @@ void check_achievements() {
                     }
                 }
                 break;
-            case 13:
-                // 简化：假设收集限定物品数量
-                break;
-            case 14:
-                {
-                    int unlocked_count = 0;
-                    for (int j = 0; j < MAX_ACHIEVEMENTS; j++) {
-                        if (player.achievements[j].unlocked) unlocked_count++;
-                    }
-                    condition_met = unlocked_count >= 20;
+            }
+            case 13: break; // 限定收藏品暂不实现
+            case 14: {
+                int unlocked = 0;
+                for (int j = 0; j < MAX_ACHIEVEMENTS; j++) {
+                    if (player.achievements[j].unlocked) unlocked++;
                 }
+                condition_met = unlocked >= 20;
                 break;
-            case 15:
-                condition_met = player.prestige_level >= 1;
-                break;
-            case 16:
-                condition_met = player.prestige_level >= 5;
-                break;
-            case 17:
-                condition_met = player.boss_defeats >= 10;
-                break;
-            case 18:
-                condition_met = player.festival_participations >= 5;
-                break;
-            case 19:
-                // 合成次数暂未统计，可后续添加
-                break;
+            }
+            case 15: condition_met = player.prestige_level >= 1; break;
+            case 16: condition_met = player.prestige_level >= 5; break;
+            case 17: condition_met = player.boss_defeats >= 10; break;
+            case 18: condition_met = player.festival_participations >= 5; break;
+            case 19: condition_met = player.craft_count >= 10; break;
         }
         
         if (condition_met) {
@@ -1758,21 +1342,19 @@ void unlock_achievement(int achievement_id) {
     
     player.kun_coins += player.achievements[achievement_id].reward;
     player.kun_exp += player.achievements[achievement_id].reward_exp;
-    player.achievement_points += player.achievements[achievement_id].reward / 10;
+    player.achievement_points += (int)(player.achievements[achievement_id].reward / 10);
     
     print_colored(COLOR_YELLOW, "\n?? 成就解锁：%s！\n", player.achievements[achievement_id].name);
     printf("   %s\n", player.achievements[achievement_id].description);
     printf("   获得奖励：%lld 坤币, %d 经验, %d 成就点\n", 
            player.achievements[achievement_id].reward,
            player.achievements[achievement_id].reward_exp,
-           player.achievements[achievement_id].reward / 10);
-    
-    check_achievements();
+           (int)(player.achievements[achievement_id].reward / 10));
 }
 
 void show_achievements() {
     CLEAR_SCREEN();
-    draw_box("成就系统");
+    draw_box("?? 成就系统");
     
     int unlocked_count = 0;
     for (int i = 0; i < MAX_ACHIEVEMENTS; i++) {
@@ -1784,7 +1366,7 @@ void show_achievements() {
     print_colored(COLOR_YELLOW, "=== 已解锁成就 ===\n");
     for (int i = 0; i < MAX_ACHIEVEMENTS; i++) {
         if (player.achievements[i].unlocked) {
-            struct tm *tm = localtime(&player.achievements[i].unlock_time);
+            struct tm* tm = localtime(&player.achievements[i].unlock_time);
             printf(COLOR_GREEN "★ %s\n" COLOR_RESET, player.achievements[i].name);
             printf("   %s\n", player.achievements[i].description);
             printf("   解锁时间：%04d-%02d-%02d %02d:%02d\n", 
@@ -1796,7 +1378,7 @@ void show_achievements() {
     print_colored(COLOR_CYAN, "\n=== 未解锁成就 ===\n");
     for (int i = 0; i < MAX_ACHIEVEMENTS; i++) {
         if (!player.achievements[i].unlocked) {
-            printf("？ %s\n", player.achievements[i].name);
+            printf("? %s\n", player.achievements[i].name);
             printf("   %s\n", player.achievements[i].description);
         }
     }
@@ -1804,14 +1386,81 @@ void show_achievements() {
 }
 
 void show_achievement_progress() {
-    // 在成就界面已展示进度，此函数简化
+    // 已在成就界面展示
+}
+
+//================ 股票市场更新 ================
+void update_stock_prices() {
+    time_t now = time(NULL);
+    for (int i = 0; i < 5; i++) {
+        if (now - player.stocks[i].last_update >= 60) {
+            int change = (rand() % (player.stocks[i].volatility * 2 + 1)) - player.stocks[i].volatility;
+            player.stocks[i].current_price += change;
+            if (player.stocks[i].current_price < 10) player.stocks[i].current_price = 10;
+            player.stocks[i].price_change = change;
+            player.stocks[i].last_update = now;
+        }
+    }
+}
+
+//================ 被动收入计算 ================
+void calculate_passive_income() {
+    money_t passive = 0;
+    
+    // 家具被动收入
+    for (int i = 0; i < player.furniture_count; i++) {
+        for (int j = 0; j < MAX_MARKET; j++) {
+            if (strcmp(player.furniture[i], market[j].name) == 0) {
+                passive += (money_t)market[j].passive_income;
+                break;
+            }
+        }
+    }
+    
+    // 房产被动收入
+    for (int i = 0; i < player.property_count; i++) {
+        passive += (money_t)player.properties[i].passive_income;
+    }
+    
+    // 管理技能加成
+    passive = (money_t)(passive * pow(player.skills[SKILL_MANAGEMENT].multiplier, 
+                                      player.skills[SKILL_MANAGEMENT].level - 1));
+    
+    if (passive > 0) {
+        player.kun_coins += passive;
+        player.total_income += passive;
+        print_colored(COLOR_GREEN, "\n?? 被动收入 +%lld 坤币\n", passive);
+    }
+}
+
+//================ 能量恢复 ================
+void recover_energy() {
+    static time_t last_energy_recovery = 0;
+    time_t now = time(NULL);
+    
+    if (last_energy_recovery == 0) {
+        last_energy_recovery = now;
+    }
+    
+    int seconds_passed = (int)(now - last_energy_recovery);
+    if (seconds_passed >= 600) {  // 每10分钟恢复1点
+        int recovery = seconds_passed / 600;
+        if (recovery > 10) recovery = 10;
+        
+        if (player.has_premium) recovery *= 2;
+        
+        player.energy += recovery;
+        if (player.energy > player.max_energy) player.energy = player.max_energy;
+        
+        last_energy_recovery = now;
+    }
 }
 
 //================ 游戏主逻辑 ================
 void do_task(int task_index) {
     if (task_index < 0 || task_index >= MAX_TASKS) return;
     
-    Task *task = &tasks[task_index];
+    Task* task = &tasks[task_index];
     
     // 检查是否解锁
     if (!task->is_unlocked) {
@@ -1820,7 +1469,7 @@ void do_task(int task_index) {
             player.tasks_unlocked[task_index] = true;
             player.kun_coins -= task->unlock_cost;
             player.total_expenses += task->unlock_cost;
-            print_colored(COLOR_GREEN, "? 解锁新任务：%s！\n", task->name);
+            print_colored(COLOR_GREEN, "?? 解锁新任务：%s！\n", task->name);
         } else {
             print_colored(COLOR_RED, "? 需要 %d 坤币解锁此任务！\n", task->unlock_cost);
             return;
@@ -1836,38 +1485,46 @@ void do_task(int task_index) {
     // 检查技能要求
     for (int i = 0; i < 3; i++) {
         if (task->required_skills[i] != SKILL_NONE) {
-            SkillType skill_type = task->required_skills[i];
-            if (player.skills[skill_type].level < task->required_skill_level[i]) {
+            if (player.skills[task->required_skills[i]].level < task->required_skill_level[i]) {
                 print_colored(COLOR_RED, "? 需要 %s 技能等级 %d！\n", 
-                           player.skills[skill_type].name, task->required_skill_level[i]);
+                           player.skills[task->required_skills[i]].name, 
+                           task->required_skill_level[i]);
                 return;
             }
         }
     }
     
+    // 计算实际能量消耗（耐力技能减免）
+    int actual_energy_cost = task->energy_cost;
+    if (player.skills[SKILL_ENDURANCE].level > 0) {
+        float reduction = 1.0f - player.skills[SKILL_ENDURANCE].level * 0.02f;
+        if (reduction < 0.5f) reduction = 0.5f;
+        actual_energy_cost = (int)(task->energy_cost * reduction);
+        if (actual_energy_cost < 1) actual_energy_cost = 1;
+    }
+    
     // 检查能量
-    if (player.energy < task->energy_cost) {
-        print_colored(COLOR_RED, "? 能量不足！需要 %d 能量\n", task->energy_cost);
+    if (player.energy < actual_energy_cost) {
+        print_colored(COLOR_RED, "? 能量不足！需要 %d 能量\n", actual_energy_cost);
         return;
     }
     
     // 成功率判定
     float success_chance = task->success_rate;
-    // 幸运技能加成
     success_chance *= pow(player.skills[SKILL_LUCK].multiplier, player.skills[SKILL_LUCK].level - 1);
     if (success_chance > 0.95f) success_chance = 0.95f;
     
-    bool success = (rand() % 100) < (success_chance * 100);
+    bool success = (rand() % 100) < (int)(success_chance * 100);
     
     // 计算收入
-    float base_income = task->base_income;
+    float base_income = (float)task->base_income;
     float multiplier = 1.0f;
     
     // 技能加成
     for (int i = 0; i < 3; i++) {
         if (task->required_skills[i] != SKILL_NONE) {
-            Skill *skill = &player.skills[task->required_skills[i]];
-            multiplier *= pow(skill->multiplier, skill->level);
+            multiplier *= pow(player.skills[task->required_skills[i]].multiplier, 
+                            player.skills[task->required_skills[i]].level);
         }
     }
     
@@ -1883,28 +1540,20 @@ void do_task(int task_index) {
     
     // 季节加成
     switch (player.current_season) {
-        case SEASON_SPRING:
-            multiplier *= 1.1f;
-            break;
-        case SEASON_SUMMER:
-            multiplier *= 1.05f;
-            break;
-        case SEASON_AUTUMN:
-            multiplier *= 1.15f;
-            break;
-        case SEASON_WINTER:
-            multiplier *= 0.9f;
-            break;
+        case SEASON_SPRING: multiplier *= 1.1f; break;
+        case SEASON_SUMMER: multiplier *= 1.05f; break;
+        case SEASON_AUTUMN: multiplier *= 1.15f; break;
+        case SEASON_WINTER: multiplier *= 0.9f; break;
     }
     
     // 宠物加成
     for (int i = 0; i < player.pet_count; i++) {
-        if (player.pets[i].is_unlocked) {
+        if (player.pets[i].is_unlocked && player.pets[i].happiness > 50) {
             multiplier *= player.pets[i].bonus_multiplier;
         }
     }
     
-    // 装备加成（新手装备等）
+    // 装备加成
     for (int i = 0; i < player.inventory_count; i++) {
         if (strcmp(player.inventory[i].name, "新手装备") == 0 && player.inventory[i].quantity > 0) {
             multiplier *= 1.05f;
@@ -1924,20 +1573,13 @@ void do_task(int task_index) {
         exp_gain *= 2;
     }
     
-    // 耐力技能减少能量消耗
-    int energy_cost = task->energy_cost;
-    if (player.skills[SKILL_ENDURANCE].level > 0) {
-        energy_cost = (int)(energy_cost * (1.0f - player.skills[SKILL_ENDURANCE].level * 0.02f));
-        if (energy_cost < 1) energy_cost = 1;
-    }
-    
     if (!success) {
-        income = income / 2; // 失败收入减半
-        print_colored(COLOR_RED, "\n? 任务失败！只获得部分收入...\n");
+        income = income / 2;
+        print_colored(COLOR_RED, "\n?? 任务失败！只获得部分收入...\n");
     }
     
     // 执行任务
-    player.energy -= energy_cost;
+    player.energy -= actual_energy_cost;
     player.kun_coins += income;
     player.kun_exp += exp_gain;
     player.total_income += income;
@@ -1952,7 +1594,7 @@ void do_task(int task_index) {
     print_colored(COLOR_GREEN, "\n? 完成任务：%s\n", task->name);
     printf("   获得收入：%d 坤币\n", income);
     printf("   获得经验：%d\n", exp_gain);
-    printf("   消耗能量：%d (原%d)\n", energy_cost, task->energy_cost);
+    printf("   消耗能量：%d (原%d)\n", actual_energy_cost, task->energy_cost);
     printf("   剩余能量：%d/%d\n", player.energy, player.max_energy);
     
     // 检查升级
@@ -1972,8 +1614,10 @@ void do_task(int task_index) {
     
     // 检查任务进度
     for (int i = 0; i < MAX_QUESTS; i++) {
-        if (!player.active_quests[i].completed) {
-            if (strstr(player.active_quests[i].description, "完成任务") != NULL) {
+        if (!player.active_quests[i].completed && 
+            player.active_quests[i].deadline != 0 &&
+            player.active_quests[i].deadline > time(NULL)) {
+            if (strstr(player.active_quests[i].description, "完成") != NULL) {
                 player.active_quests[i].progress++;
                 if (player.active_quests[i].progress >= player.active_quests[i].requirement) {
                     complete_quest(i);
@@ -1982,12 +1626,12 @@ void do_task(int task_index) {
         }
     }
     
-    // 宠物饱食度下降
+    // 宠物状态更新
     for (int i = 0; i < player.pet_count; i++) {
         if (player.pets[i].is_unlocked) {
-            player.pets[i].hunger -= 1;
+            player.pets[i].hunger -= 2;
             if (player.pets[i].hunger < 0) player.pets[i].hunger = 0;
-            player.pets[i].happiness -= 2;
+            player.pets[i].happiness -= 1;
             if (player.pets[i].happiness < 0) player.pets[i].happiness = 0;
         }
     }
@@ -1998,7 +1642,7 @@ void do_task(int task_index) {
 void buy_item(int index) {
     if (index < 0 || index >= MAX_MARKET) return;
     
-    MarketItem *item = &market[index];
+    MarketItem* item = &market[index];
     
     if (player.level < item->required_level) {
         print_colored(COLOR_RED, "? 需要等级 %d 才能购买此物品！\n", item->required_level);
@@ -2017,16 +1661,17 @@ void buy_item(int index) {
     
     int price = item->price;
     if (player.active_event == EVENT_INFLATION) {
-        price = (int)(price * 1.2);
+        price = (int)(price * 1.2f);
     }
     
     if (player.kun_coins >= price) {
         player.kun_coins -= price;
         player.total_expenses += price;
         
-        strcpy(player.furniture[player.furniture_count], item->name);
+        safe_strcpy(player.furniture[player.furniture_count], item->name, 50);
         player.furniture_count++;
         
+        // 添加到背包
         bool found = false;
         for (int i = 0; i < player.inventory_count; i++) {
             if (strcmp(player.inventory[i].name, item->name) == 0) {
@@ -2038,24 +1683,24 @@ void buy_item(int index) {
         
         if (!found && player.inventory_count < MAX_INVENTORY) {
             InventoryItem inv_item;
-            strcpy(inv_item.name, item->name);
+            safe_strcpy(inv_item.name, item->name, 50);
             inv_item.price = price;
             inv_item.value = item->value;
             inv_item.rarity = item->rarity;
             inv_item.is_consumable = false;
             inv_item.effect_value = (int)(item->passive_income * 100);
-            strcpy(inv_item.description, item->description);
+            safe_strcpy(inv_item.description, item->description, 100);
             inv_item.quantity = 1;
             player.inventory[player.inventory_count++] = inv_item;
         }
         
-        print_colored(COLOR_GREEN, "\n? 购买成功：%s\n", item->name);
+        print_colored(COLOR_GREEN, "\n?? 购买成功：%s\n", item->name);
         printf("   花费：%d 坤币\n", price);
         printf("   被动收入：%.1f 坤币/小时\n", item->passive_income);
         
-        // 检查成就
         check_achievements();
         
+        // 检查每日任务
         for (int i = 0; i < MAX_QUESTS; i++) {
             if (!player.active_quests[i].completed && 
                 strstr(player.active_quests[i].description, "购买家具") != NULL) {
@@ -2073,7 +1718,7 @@ void buy_item(int index) {
 void upgrade_skill(int skill_index) {
     if (skill_index < 0 || skill_index >= MAX_SKILLS) return;
     
-    Skill *skill = &player.skills[skill_index];
+    Skill* skill = &player.skills[skill_index];
     
     if (skill->level >= skill->max_level) {
         print_colored(COLOR_RED, "? 技能已达到最大等级！\n");
@@ -2099,12 +1744,12 @@ void upgrade_skill(int skill_index) {
     player.kun_coins -= cost;
     player.total_expenses += cost;
     skill->level++;
-    skill->experience = 0;
     
-    print_colored(COLOR_GREEN, "\n? 技能升级：%s 提升到等级 %d\n", skill->name, skill->level);
+    print_colored(COLOR_GREEN, "\n?? 技能升级：%s 提升到等级 %d\n", skill->name, skill->level);
     printf("   花费：%d 坤币，1 技能点\n", cost);
     printf("   当前加成：%.0f%%\n", (pow(skill->multiplier, skill->level) - 1) * 100);
     
+    // 检查每周任务
     for (int i = 0; i < MAX_QUESTS; i++) {
         if (!player.active_quests[i].completed && 
             strstr(player.active_quests[i].description, "升级技能") != NULL) {
@@ -2121,13 +1766,14 @@ void upgrade_skill(int skill_index) {
 void feed_pet(int pet_index) {
     if (pet_index < 0 || pet_index >= MAX_PETS) return;
     
-    Pet *pet = &player.pets[pet_index];
+    Pet* pet = &player.pets[pet_index];
     
     if (!pet->is_unlocked) {
         print_colored(COLOR_RED, "? 宠物未解锁！\n");
         return;
     }
     
+    // 查找宠物食品
     bool has_food = false;
     for (int i = 0; i < player.inventory_count; i++) {
         if (strcmp(player.inventory[i].name, "宠物食品") == 0 && player.inventory[i].quantity > 0) {
@@ -2138,7 +1784,6 @@ void feed_pet(int pet_index) {
                     player.inventory[j] = player.inventory[j + 1];
                 }
                 player.inventory_count--;
-                i--;
             }
             break;
         }
@@ -2154,7 +1799,7 @@ void feed_pet(int pet_index) {
     if (pet->happiness > 100) pet->happiness = 100;
     pet->last_fed = time(NULL);
     
-    print_colored(COLOR_GREEN, "\n? 喂食 %s\n", pet->name);
+    print_colored(COLOR_GREEN, "\n?? 喂食 %s\n", pet->name);
     printf("   饱食度：100\n");
     printf("   快乐度：%d\n", pet->happiness);
 }
@@ -2162,7 +1807,7 @@ void feed_pet(int pet_index) {
 void play_with_pet(int pet_index) {
     if (pet_index < 0 || pet_index >= MAX_PETS) return;
     
-    Pet *pet = &player.pets[pet_index];
+    Pet* pet = &player.pets[pet_index];
     
     if (!pet->is_unlocked) {
         print_colored(COLOR_RED, "? 宠物未解锁！\n");
@@ -2180,7 +1825,7 @@ void play_with_pet(int pet_index) {
     pet->hunger -= 5;
     if (pet->hunger < 0) pet->hunger = 0;
     
-    print_colored(COLOR_GREEN, "\n? 和 %s 玩耍，快乐度增加！\n", pet->name);
+    print_colored(COLOR_GREEN, "\n?? 和 %s 玩耍，快乐度增加！\n", pet->name);
     printf("   快乐度：%d\n", pet->happiness);
     printf("   饱食度：%d\n", pet->hunger);
 }
@@ -2194,6 +1839,8 @@ void adopt_pet(PetType type) {
     // 检查解锁条件
     int unlock_level = 0;
     money_t unlock_cost = 0;
+    const char* pet_type_name = "";
+    
     switch (type) {
         case PET_CAT:
             if (player.pets[0].is_unlocked) {
@@ -2202,27 +1849,34 @@ void adopt_pet(PetType type) {
             }
             unlock_level = 1;
             unlock_cost = 0;
+            pet_type_name = "猫咪";
             break;
         case PET_DOG:
             if (player.pets[1].is_unlocked) return;
             unlock_level = 5;
             unlock_cost = 5000;
+            pet_type_name = "狗狗";
             break;
         case PET_PARROT:
             if (player.pets[2].is_unlocked) return;
             unlock_level = 15;
             unlock_cost = 50000;
+            pet_type_name = "鹦鹉";
             break;
         case PET_DRAGON:
             if (player.pets[3].is_unlocked) return;
             unlock_level = 30;
             unlock_cost = 500000;
+            pet_type_name = "龙";
             break;
         case PET_PHOENIX:
             if (player.pets[4].is_unlocked) return;
             unlock_level = 50;
             unlock_cost = 5000000;
+            pet_type_name = "凤凰";
             break;
+        default:
+            return;
     }
     
     if (player.level < unlock_level) {
@@ -2238,57 +1892,37 @@ void adopt_pet(PetType type) {
     player.kun_coins -= unlock_cost;
     player.total_expenses += unlock_cost;
     
-    int idx = -1;
     for (int i = 0; i < MAX_PETS; i++) {
         if (player.pets[i].type == type && !player.pets[i].is_unlocked) {
-            idx = i;
+            player.pets[i].is_unlocked = true;
+            player.pet_count++;
+            player.pets[i].happiness = 100;
+            player.pets[i].hunger = 100;
+            player.pets[i].level = 1;
+            
+            print_colored(COLOR_GREEN, "\n?? 成功领养新宠物：%s（%s）！\n", 
+                         player.pets[i].name, pet_type_name);
+            printf("   加成：%.2f\n", player.pets[i].bonus_multiplier);
             break;
         }
-    }
-    
-    if (idx >= 0) {
-        player.pets[idx].is_unlocked = true;
-        player.pet_count++;
-        // 设置默认名字
-        const char* names[] = {"猫咪", "狗狗", "鹦鹉", "小龙", "凤凰"};
-        strcpy(player.pets[idx].name, names[type]);
-        player.pets[idx].happiness = 100;
-        player.pets[idx].hunger = 100;
-        player.pets[idx].level = 1;
-        player.pets[idx].bonus_multiplier = 1.0f + 0.05f * (type + 1);
-        
-        print_colored(COLOR_GREEN, "\n? 成功领养新宠物：%s！\n", player.pets[idx].name);
-        printf("   加成：%.1f\n", player.pets[idx].bonus_multiplier);
     }
 }
 
 void complete_quest(int quest_index) {
     if (quest_index < 0 || quest_index >= MAX_QUESTS) return;
     
-    Quest *quest = &player.active_quests[quest_index];
+    Quest* quest = &player.active_quests[quest_index];
     
     if (quest->completed) return;
-    if (quest->deadline != 0 && quest->deadline < time(NULL)) return; // 已过期
+    if (quest->deadline != 0 && quest->deadline < time(NULL)) return;
     
     quest->completed = true;
     player.kun_coins += quest->reward_coins;
     player.kun_exp += quest->reward_exp;
     player.total_income += quest->reward_coins;
     
-    print_colored(COLOR_GREEN, "\n? 任务完成：%s\n", quest->name);
+    print_colored(COLOR_GREEN, "\n?? 任务完成：%s\n", quest->name);
     printf("   获得奖励：%lld 坤币，%d 经验\n", quest->reward_coins, quest->reward_exp);
-    
-    // 每日/每周任务自动重置（下次登录时重置）
-    if (quest->type == QUEST_DAILY || quest->type == QUEST_WEEKLY) {
-        quest->completed = false;
-        quest->progress = 0;
-        quest->assigned_time = time(NULL);
-        if (quest->type == QUEST_DAILY) {
-            quest->deadline = time(NULL) + 86400;
-        } else {
-            quest->deadline = time(NULL) + 604800;
-        }
-    }
 }
 
 void level_up_company() {
@@ -2297,7 +1931,7 @@ void level_up_company() {
         return;
     }
     
-    CompanyLevel *next_level = &player.company_levels[player.current_company_level + 1];
+    CompanyLevel* next_level = &player.company_levels[player.current_company_level + 1];
     
     if (player.kun_coins < next_level->required_coins) {
         print_colored(COLOR_RED, "? 升级需要 %lld 坤币！\n", next_level->required_coins);
@@ -2309,10 +1943,21 @@ void level_up_company() {
     player.current_company_level++;
     player.skill_points += next_level->unlock_skill_points;
     
-    print_colored(COLOR_GREEN, "\n? 公司升级：%s\n", next_level->name);
+    print_colored(COLOR_GREEN, "\n?? 公司升级：%s\n", next_level->name);
     printf("   花费：%lld 坤币\n", next_level->required_coins);
     printf("   获得 %d 技能点\n", next_level->unlock_skill_points);
     printf("   收入倍数：%.1f\n", next_level->income_multiplier);
+    
+    // 检查主线任务
+    for (int i = 0; i < MAX_QUESTS; i++) {
+        if (!player.active_quests[i].completed && 
+            strstr(player.active_quests[i].description, "公司") != NULL) {
+            player.active_quests[i].progress = player.current_company_level;
+            if (player.active_quests[i].progress >= player.active_quests[i].requirement) {
+                complete_quest(i);
+            }
+        }
+    }
     
     check_achievements();
 }
@@ -2321,7 +1966,7 @@ void buy_stock(int stock_index, int amount) {
     if (stock_index < 0 || stock_index >= 5) return;
     if (amount <= 0) return;
     
-    Stock *stock = &player.stocks[stock_index];
+    Stock* stock = &player.stocks[stock_index];
     int total_cost = stock->current_price * amount;
     
     if (player.kun_coins < total_cost) {
@@ -2333,10 +1978,11 @@ void buy_stock(int stock_index, int amount) {
     player.total_expenses += total_cost;
     player.invested_stocks[stock_index] += amount;
     
-    print_colored(COLOR_GREEN, "\n? 购买股票：%s × %d\n", stock->name, amount);
+    print_colored(COLOR_GREEN, "\n?? 购买股票：%s × %d\n", stock->name, amount);
     printf("   单价：%d 坤币\n", stock->current_price);
     printf("   总价：%d 坤币\n", total_cost);
     
+    // 检查每日任务
     for (int i = 0; i < MAX_QUESTS; i++) {
         if (!player.active_quests[i].completed && 
             strstr(player.active_quests[i].description, "投资股票") != NULL) {
@@ -2356,14 +2002,14 @@ void sell_stock(int stock_index, int amount) {
         return;
     }
     
-    Stock *stock = &player.stocks[stock_index];
+    Stock* stock = &player.stocks[stock_index];
     int total_value = stock->current_price * amount;
     
     player.kun_coins += total_value;
     player.total_income += total_value;
     player.invested_stocks[stock_index] -= amount;
     
-    print_colored(COLOR_GREEN, "\n? 出售股票：%s × %d\n", stock->name, amount);
+    print_colored(COLOR_GREEN, "\n?? 出售股票：%s × %d\n", stock->name, amount);
     printf("   单价：%d 坤币\n", stock->current_price);
     printf("   总价：%d 坤币\n", total_value);
 }
@@ -2375,7 +2021,7 @@ void buy_property(int property_index) {
         return;
     }
     
-    Property *prop = &available_properties[property_index];
+    Property* prop = &available_properties[property_index];
     
     if (player.kun_coins < prop->coins_needed) {
         print_colored(COLOR_RED, "? 坤币不足！需要 %lld 坤币\n", prop->coins_needed);
@@ -2386,8 +2032,8 @@ void buy_property(int property_index) {
     player.total_expenses += prop->coins_needed;
     
     // 添加到已拥有房产
-    strcpy(player.properties[player.property_count].name, prop->name);
-    strcpy(player.properties[player.property_count].description, prop->description);
+    safe_strcpy(player.properties[player.property_count].name, prop->name, 30);
+    safe_strcpy(player.properties[player.property_count].description, prop->description, 100);
     player.properties[player.property_count].coins_needed = prop->coins_needed;
     player.properties[player.property_count].days_needed = prop->days_needed;
     player.properties[player.property_count].passive_income = prop->passive_income;
@@ -2396,7 +2042,7 @@ void buy_property(int property_index) {
     
     prop->owned = true;
     
-    print_colored(COLOR_GREEN, "\n? 购买成功：%s\n", prop->name);
+    print_colored(COLOR_GREEN, "\n?? 购买成功：%s\n", prop->name);
     printf("   花费：%lld 坤币\n", prop->coins_needed);
     printf("   建造时间：%d 天\n", prop->days_needed);
     printf("   每日收入：%.0f 坤币\n", prop->passive_income);
@@ -2417,11 +2063,12 @@ void participate_lottery() {
         base_chance *= 2;
     }
     
-    float luck_multiplier = pow(player.skills[SKILL_LUCK].multiplier, player.skills[SKILL_LUCK].level - 1);
+    float luck_multiplier = pow(player.skills[SKILL_LUCK].multiplier, 
+                                player.skills[SKILL_LUCK].level - 1);
     float chance = base_chance * luck_multiplier;
     
     int roll = rand() % 10000;
-    if (roll < chance * 10000) {
+    if (roll < (int)(chance * 10000)) {
         int prize = 10000 + rand() % 90000;
         prize = (int)(prize * (1.0f + player.prestige_level * 0.1f));
         player.kun_coins += prize;
@@ -2491,6 +2138,7 @@ void challenge_boss() {
         power += player.skills[i].level * 10;
     }
     power += player.level * 5;
+    power *= (1.0f + player.prestige_level * 0.1f);
     
     // BOSS强度
     float boss_hp = 1000 + player.boss_defeats * 200;
@@ -2515,8 +2163,12 @@ void challenge_boss() {
                 }
             }
         }
+        
+        // 结束BOSS事件
+        end_event();
     } else {
         print_colored(COLOR_RED, "\n?? BOSS太强了，挑战失败！\n");
+        printf("   需要战斗力：%.0f，当前战斗力：%.0f\n", boss_hp, power);
     }
 }
 
@@ -2573,9 +2225,8 @@ void change_season() {
 }
 
 void craft_item() {
-    // 合成系统：消耗基础物品合成高级物品
     CLEAR_SCREEN();
-    draw_box("物品合成");
+    draw_box("?? 物品合成");
     
     printf("可合成配方：\n");
     printf("1. 能量饮料（2个） → 能量大补丸（恢复50能量）\n");
@@ -2596,7 +2247,6 @@ void craft_item() {
                 }
             }
             if (count >= 2) {
-                // 消耗2个
                 int to_remove = 2;
                 for (int i = 0; i < player.inventory_count && to_remove > 0; i++) {
                     if (strcmp(player.inventory[i].name, "能量饮料") == 0) {
@@ -2623,25 +2273,72 @@ void craft_item() {
                 }
                 if (!found && player.inventory_count < MAX_INVENTORY) {
                     InventoryItem item;
-                    strcpy(item.name, "能量大补丸");
+                    safe_strcpy(item.name, "能量大补丸", 50);
                     item.price = 0;
                     item.value = 30;
                     item.rarity = RARITY_UNCOMMON;
                     item.is_consumable = true;
                     item.effect_value = 50;
-                    strcpy(item.description, "恢复50点能量");
+                    safe_strcpy(item.description, "恢复50点能量", 100);
                     item.quantity = 1;
                     player.inventory[player.inventory_count++] = item;
                 }
-                print_colored(COLOR_GREEN, "合成成功！获得能量大补丸\n");
+                player.craft_count++;
+                print_colored(COLOR_GREEN, "? 合成成功！获得能量大补丸\n");
             } else {
-                print_colored(COLOR_RED, "能量饮料不足！\n");
+                print_colored(COLOR_RED, "? 能量饮料不足！需要2个\n");
             }
             break;
         }
         case 2: {
-            // 类似实现
-            print_colored(COLOR_YELLOW, "该配方尚未开放\n");
+            int count = 0;
+            for (int i = 0; i < player.inventory_count; i++) {
+                if (strcmp(player.inventory[i].name, "宠物食品") == 0) {
+                    count += player.inventory[i].quantity;
+                }
+            }
+            if (count >= 3) {
+                int to_remove = 3;
+                for (int i = 0; i < player.inventory_count && to_remove > 0; i++) {
+                    if (strcmp(player.inventory[i].name, "宠物食品") == 0) {
+                        int remove = (player.inventory[i].quantity < to_remove) ? player.inventory[i].quantity : to_remove;
+                        player.inventory[i].quantity -= remove;
+                        to_remove -= remove;
+                        if (player.inventory[i].quantity <= 0) {
+                            for (int j = i; j < player.inventory_count - 1; j++) {
+                                player.inventory[j] = player.inventory[j + 1];
+                            }
+                            player.inventory_count--;
+                            i--;
+                        }
+                    }
+                }
+                // 添加高级宠物粮
+                bool found = false;
+                for (int i = 0; i < player.inventory_count; i++) {
+                    if (strcmp(player.inventory[i].name, "高级宠物粮") == 0) {
+                        player.inventory[i].quantity++;
+                        found = true;
+                        break;
+                    }
+                }
+                if (!found && player.inventory_count < MAX_INVENTORY) {
+                    InventoryItem item;
+                    safe_strcpy(item.name, "高级宠物粮", 50);
+                    item.price = 0;
+                    item.value = 50;
+                    item.rarity = RARITY_RARE;
+                    item.is_consumable = true;
+                    item.effect_value = 100;
+                    safe_strcpy(item.description, "喂食宠物，恢复全部饱食度和20快乐度", 100);
+                    item.quantity = 1;
+                    player.inventory[player.inventory_count++] = item;
+                }
+                player.craft_count++;
+                print_colored(COLOR_GREEN, "? 合成成功！获得高级宠物粮\n");
+            } else {
+                print_colored(COLOR_RED, "? 宠物食品不足！需要3个\n");
+            }
             break;
         }
         case 3: {
@@ -2652,7 +2349,6 @@ void craft_item() {
                 }
             }
             if (count >= 5) {
-                // 消耗5张
                 int to_remove = 5;
                 for (int i = 0; i < player.inventory_count && to_remove > 0; i++) {
                     if (strcmp(player.inventory[i].name, "彩票") == 0) {
@@ -2669,38 +2365,45 @@ void craft_item() {
                     }
                 }
                 player.mystery_keys++;
-                print_colored(COLOR_GREEN, "合成成功！获得1把神秘钥匙\n");
+                player.craft_count++;
+                print_colored(COLOR_GREEN, "? 合成成功！获得1把神秘钥匙\n");
             } else {
-                print_colored(COLOR_RED, "彩票不足！\n");
+                print_colored(COLOR_RED, "? 彩票不足！需要5张\n");
             }
             break;
         }
         case 4:
-            print_colored(COLOR_YELLOW, "该配方尚未开放\n");
+            print_colored(COLOR_YELLOW, "? 该配方正在开发中...\n");
             break;
         default:
             break;
     }
+    
+    check_achievements();
     press_any_key();
 }
 
 void trade_with_friend(int friend_index) {
     if (friend_index < 0 || friend_index >= player.friend_count) return;
     
-    Friend *f = &player.friends[friend_index];
+    Friend* f = &player.friends[friend_index];
     if (f->friendship_level < 50) {
         print_colored(COLOR_RED, "? 好感度不足50，无法交易！\n");
         return;
     }
     
-    // 简单交易：用坤币换经验
     printf("输入交易坤币数量：");
-    int amount;
-    scanf("%d", &amount);
-    clear_input_buffer();
+    char buffer[100];
+    if (fgets(buffer, sizeof(buffer), stdin) == NULL) return;
     
-    if (amount <= 0 || amount > player.kun_coins) {
-        print_colored(COLOR_RED, "? 数量无效或坤币不足！\n");
+    int amount;
+    if (sscanf(buffer, "%d", &amount) != 1 || amount <= 0) {
+        print_colored(COLOR_RED, "? 输入无效！\n");
+        return;
+    }
+    
+    if (amount > player.kun_coins) {
+        print_colored(COLOR_RED, "? 坤币不足！\n");
         return;
     }
     
@@ -2711,15 +2414,14 @@ void trade_with_friend(int friend_index) {
     f->friendship_level += 5;
     if (f->friendship_level > 100) f->friendship_level = 100;
     
-    print_colored(COLOR_GREEN, "交易成功！获得 %d 经验，好感度+5\n", exp_gain);
+    print_colored(COLOR_GREEN, "? 交易成功！获得 %d 经验，好感度+5\n", exp_gain);
 }
 
 void send_gift_to_friend(int friend_index) {
     if (friend_index < 0 || friend_index >= player.friend_count) return;
     
-    Friend *f = &player.friends[friend_index];
+    Friend* f = &player.friends[friend_index];
     
-    // 检查是否有礼物
     bool has_gift = false;
     for (int i = 0; i < player.inventory_count; i++) {
         if (strstr(player.inventory[i].name, "彩票") != NULL && player.inventory[i].quantity > 0) {
@@ -2742,11 +2444,10 @@ void send_gift_to_friend(int friend_index) {
     
     f->friendship_level += 20;
     if (f->friendship_level > 100) f->friendship_level = 100;
-    print_colored(COLOR_GREEN, "赠送成功！好感度+20\n");
+    print_colored(COLOR_GREEN, "?? 赠送成功！好感度+20\n");
 }
 
 void prestige() {
-    // 声望重置
     if (player.prestige_level == 0) {
         int unlocked_achievements = 0;
         for (int i = 0; i < MAX_ACHIEVEMENTS; i++) {
@@ -2755,15 +2456,16 @@ void prestige() {
         
         if (player.level < 50 || player.kun_coins < 1000000 || unlocked_achievements < 20) {
             print_colored(COLOR_RED, "? 不满足声望重置条件！\n");
+            printf("   需要：等级50、100万坤币、20个成就\n");
             return;
         }
     }
     
-    printf("确定要进行声望重置吗？这将重置大部分进度，但获得永久加成。\n");
+    printf("?? 确定要进行声望重置吗？这将重置大部分进度，但获得永久加成。\n");
     printf("输入 YES 确认：");
     char confirm[10];
-    scanf("%s", confirm);
-    clear_input_buffer();
+    if (fgets(confirm, sizeof(confirm), stdin) == NULL) return;
+    confirm[strcspn(confirm, "\n")] = '\0';
     
     if (strcmp(confirm, "YES") != 0) {
         print_colored(COLOR_YELLOW, "已取消\n");
@@ -2774,18 +2476,20 @@ void prestige() {
     int new_prestige_level = player.prestige_level + 1;
     int prestige_points = player.prestige_points + 100 * new_prestige_level;
     
-    // 重置玩家数据
-    money_t saved_coins = 0;
-    int saved_prestige_level = new_prestige_level;
-    int saved_prestige_points = prestige_points;
+    // 重置玩家数据（保留声望和成就）
+    Achievement saved_achievements[MAX_ACHIEVEMENTS];
+    memcpy(saved_achievements, player.achievements, sizeof(Achievement) * MAX_ACHIEVEMENTS);
+    int saved_achievement_points = player.achievement_points;
     
     init_player();
     
-    // 恢复声望数据
-    player.prestige_level = saved_prestige_level;
-    player.prestige_points = saved_prestige_points;
-    player.kun_coins = 1000; // 初始资金
-    player.skill_points += 5 * saved_prestige_level; // 额外技能点
+    // 恢复声望和成就数据
+    player.prestige_level = new_prestige_level;
+    player.prestige_points = prestige_points;
+    memcpy(player.achievements, saved_achievements, sizeof(Achievement) * MAX_ACHIEVEMENTS);
+    player.achievement_points = saved_achievement_points;
+    player.kun_coins = 1000;
+    player.skill_points += 5 * new_prestige_level;
     
     // 解锁声望成就
     if (!player.achievements[15].unlocked) {
@@ -2796,10 +2500,23 @@ void prestige() {
     printf("   声望等级：%d\n", player.prestige_level);
     printf("   声望点数：%d\n", player.prestige_points);
     printf("   所有收入增加 %d%%\n", player.prestige_level * 5);
+    
+    // 检查声望任务
+    for (int i = 0; i < MAX_QUESTS; i++) {
+        if (!player.active_quests[i].completed && 
+            strstr(player.active_quests[i].description, "声望重置") != NULL) {
+            player.active_quests[i].progress++;
+            if (player.active_quests[i].progress >= player.active_quests[i].requirement) {
+                complete_quest(i);
+            }
+        }
+    }
 }
 
 void buy_premium(int duration_days) {
     int cost = duration_days * 1000;
+    if (duration_days > 365) cost = 100000; // 永久会员
+    
     if (player.kun_coins < cost) {
         print_colored(COLOR_RED, "? 坤币不足！需要 %d\n", cost);
         return;
@@ -2808,32 +2525,40 @@ void buy_premium(int duration_days) {
     player.kun_coins -= cost;
     player.total_expenses += cost;
     player.has_premium = true;
-    player.premium_until = time(NULL) + duration_days * 86400;
     
-    print_colored(COLOR_GREEN, "\n? 购买高级会员成功！有效期 %d 天\n", duration_days);
+    if (duration_days <= 365) {
+        player.premium_until = time(NULL) + duration_days * 86400;
+    } else {
+        player.premium_until = time(NULL) + (time_t)36500 * 86400; // 100年
+    }
+    
+    print_colored(COLOR_GREEN, "\n?? 购买高级会员成功！有效期 %d 天\n", duration_days);
     printf("   会员特权：每日登录奖励翻倍，能量恢复速度+50%%\n");
 }
 
+//================ UI显示函数 ================
 void show_friends() {
     CLEAR_SCREEN();
-    draw_box("好友系统");
+    draw_box("?? 好友系统");
     
     printf("当前好友：%d/%d\n\n", player.friend_count, MAX_FRIENDS);
     
     for (int i = 0; i < player.friend_count; i++) {
-        Friend *f = &player.friends[i];
+        Friend* f = &player.friends[i];
         printf("%d. %s\n", i + 1, f->username);
         printf("   等级：%d\n", f->level);
         printf("   好感度：%.0f/100\n", f->friendship_level);
-        printf("   状态：%s\n", f->is_online ? "在线" : "离线");
+        printf("   状态：%s\n", f->is_online ? "?? 在线" : "? 离线");
         printf("\n");
     }
     
     if (player.friend_count < MAX_FRIENDS) {
-        printf("?? 可添加好友：\n");
-        for (int i = 0; i < MAX_FRIENDS - player.friend_count; i++) {
-            if (!random_friends[i].is_friend) {
-                printf("   %s (等级%d)\n", random_friends[i].username, random_friends[i].level);
+        printf("? 可添加好友：\n");
+        for (int i = 0; i < MAX_FRIENDS; i++) {
+            if (!potential_friends[i].is_friend && potential_friends[i].level > 0) {
+                printf("   %s (等级%d)\n", potential_friends[i].username, potential_friends[i].level);
+                potential_friends[i].is_friend = true;
+                break;
             }
         }
     }
@@ -2846,13 +2571,13 @@ void show_friends() {
     
     if (choice == 1) {
         if (player.friend_count >= MAX_FRIENDS) {
-            print_colored(COLOR_RED, "好友已满！\n");
+            print_colored(COLOR_RED, "? 好友已满！\n");
         } else {
             for (int i = 0; i < MAX_FRIENDS; i++) {
-                if (!random_friends[i].is_friend) {
-                    player.friends[player.friend_count++] = random_friends[i];
-                    random_friends[i].is_friend = true;
-                    print_colored(COLOR_GREEN, "添加好友成功！\n");
+                if (!potential_friends[i].is_friend) {
+                    player.friends[player.friend_count++] = potential_friends[i];
+                    potential_friends[i].is_friend = true;
+                    print_colored(COLOR_GREEN, "? 添加好友成功！\n");
                     break;
                 }
             }
@@ -2871,7 +2596,7 @@ void show_friends() {
 
 void show_statistics() {
     CLEAR_SCREEN();
-    draw_box("游戏统计");
+    draw_box("?? 游戏统计");
     
     printf(COLOR_BOLD "?? 游戏时长\n" COLOR_RESET);
     int hours = player.total_play_time / 3600;
@@ -2890,24 +2615,24 @@ void show_statistics() {
     printf("   本周完成：%d\n", player.weekly_task_completions);
     
     printf(COLOR_BOLD "\n?? 资产统计\n" COLOR_RESET);
-    printf("   家具：%d\n", player.furniture_count);
-    printf("   宠物：%d\n", player.pet_count);
-    printf("   房产：%d\n", player.property_count);
-    printf("   股票持仓：");
+    printf("   家具：%d/%d\n", player.furniture_count, MAX_FURNITURE);
+    printf("   宠物：%d/%d\n", player.pet_count, MAX_PETS);
+    printf("   房产：%d/10\n", player.property_count);
     int stock_total = 0;
     for (int i = 0; i < 5; i++) {
         stock_total += player.invested_stocks[i];
     }
-    printf("%d股\n", stock_total);
+    printf("   股票持仓：%d股\n", stock_total);
     
     printf(COLOR_BOLD "\n?? 战斗统计\n" COLOR_RESET);
     printf("   BOSS击败：%d\n", player.boss_defeats);
     printf("   节日参与：%d\n", player.festival_participations);
     
-    printf(COLOR_BOLD "\n?? 其他\n" COLOR_RESET);
+    printf(COLOR_BOLD "\n? 其他\n" COLOR_RESET);
     printf("   声望等级：%d\n", player.prestige_level);
     printf("   彩票剩余：%d\n", player.lottery_tickets);
     printf("   神秘钥匙：%d\n", player.mystery_keys);
+    printf("   合成次数：%d\n", player.craft_count);
     
     draw_separator();
     press_any_key();
@@ -2915,7 +2640,13 @@ void show_statistics() {
 
 void show_premium_shop() {
     CLEAR_SCREEN();
-    draw_box("会员商城");
+    draw_box("?? 会员商城");
+    
+    printf("会员特权：\n");
+    printf("  ? 每日登录奖励翻倍\n");
+    printf("  ? 能量恢复速度+50%%\n");
+    printf("  ? 专属会员标识\n");
+    printf("  ? 每月免费神秘钥匙\n\n");
     
     printf("1. 7天会员 - 7000坤币\n");
     printf("2. 30天会员 - 30000坤币\n");
@@ -2933,9 +2664,9 @@ void show_premium_shop() {
             break;
         case 3:
             if (player.prestige_level >= 1) {
-                buy_premium(36500); // 100年
+                buy_premium(36500);
             } else {
-                print_colored(COLOR_RED, "需要声望等级1！\n");
+                print_colored(COLOR_RED, "? 需要声望等级1！\n");
             }
             break;
         default:
@@ -2946,46 +2677,53 @@ void show_premium_shop() {
 
 void show_settings() {
     CLEAR_SCREEN();
-    draw_box("游戏设置");
+    draw_box("?? 游戏设置");
     
-    printf("1. 显示设置\n");
-    printf("2. 声音设置（未实现）\n");
-    printf("3. 游戏难度（未实现）\n");
-    printf("4. 重置进度\n");
-    printf("5. 关于游戏\n");
-    printf("6. 清除存档\n");
+    printf("1. 显示帮助\n");
+    printf("2. 关于游戏\n");
+    printf("3. 重置进度\n");
+    printf("4. 清除存档\n");
     printf("0. 返回\n");
     draw_separator();
     
-    int choice = get_valid_input(0, 6);
-    char confirm; // 移出switch，避免跨case初始化问题
+    int choice = get_valid_input(0, 4);
+    char confirm;
+    
     switch (choice) {
-        case 4:
-            printf("确定重置所有进度？(y/n): ");
-            confirm = getchar();
-            clear_input_buffer();
-            if (confirm == 'y' || confirm == 'Y') {
-                remove(SAVE_FILE);
-                init_player();
-                print_colored(COLOR_GREEN, "游戏进度已重置！\n");
-            }
+        case 1:
+            show_help();
             break;
-        case 5: {
-            printf("\n打工模拟器 v2.0 - 豪华版\n");
-            printf("作者：AI\n");
+        case 2:
+            printf("\n打工模拟器 v3.0 - 完整版\n");
+            printf("作者：AI Assistant\n");
             printf("编译日期：%s %s\n", __DATE__, __TIME__);
             printf("感谢您的支持！\n");
             break;
-        }
-        case 6:
-            printf("确定删除存档文件？(y/n): ");
-            confirm = getchar();
-            clear_input_buffer();
+        case 3:
+            printf("?? 确定重置所有进度？(y/n): ");
+            confirm = _getch();
+            printf("\n");
+            if (confirm == 'y' || confirm == 'Y') {
+                remove(SAVE_FILE);
+                init_player();
+                init_tasks();
+                init_skills();
+                init_quests();
+                init_pets();
+                init_company_levels();
+                init_stocks();
+                print_colored(COLOR_GREEN, "? 游戏进度已重置！\n");
+            }
+            break;
+        case 4:
+            printf("?? 确定删除存档文件？(y/n): ");
+            confirm = _getch();
+            printf("\n");
             if (confirm == 'y' || confirm == 'Y') {
                 if (remove(SAVE_FILE) == 0) {
-                    print_colored(COLOR_GREEN, "存档已删除！\n");
+                    print_colored(COLOR_GREEN, "? 存档已删除！\n");
                 } else {
-                    print_colored(COLOR_RED, "删除失败！\n");
+                    print_colored(COLOR_RED, "? 删除失败！\n");
                 }
             }
             break;
@@ -2997,7 +2735,7 @@ void show_settings() {
 
 void show_help() {
     CLEAR_SCREEN();
-    draw_box("游戏指南");
+    draw_box("?? 游戏指南");
     
     printf(COLOR_BOLD "?? 游戏目标\n" COLOR_RESET);
     printf("通过打工赚钱，购买物品，升级技能，成为最富有的打工皇帝！\n\n");
@@ -3011,10 +2749,10 @@ void show_help() {
     
     printf(COLOR_BOLD "? 能量系统\n" COLOR_RESET);
     printf("? 每个任务消耗能量\n");
-    printf("? 能量随时间恢复（每10分钟1点）\n");
-    printf("? 使用物品恢复能量\n\n");
+    printf("? 能量每10分钟恢复1点\n");
+    printf("? 使用能量饮料可快速恢复\n\n");
     
-    printf(COLOR_BOLD "?? 特色功能\n" COLOR_RESET);
+    printf(COLOR_BOLD "? 特色功能\n" COLOR_RESET);
     printf("? 季节系统：不同季节有不同加成\n");
     printf("? 宠物系统：宠物提供额外加成\n");
     printf("? 公司经营：升级公司获得被动收入\n");
@@ -3025,16 +2763,12 @@ void show_help() {
     printf("? 好友系统：与好友互动\n");
     printf("? 会员系统：购买会员享特权\n\n");
     
-    printf(COLOR_BOLD "?? 快捷键\n" COLOR_RESET);
-    printf("   主菜单输入数字选择功能\n");
-    printf("   0 通常为返回或退出\n\n");
-    
     draw_separator();
 }
 
 void show_status() {
     CLEAR_SCREEN();
-    draw_box("玩家状态");
+    draw_box("?? 玩家状态");
     
     printf(COLOR_BOLD "?? 基本信息\n" COLOR_RESET);
     printf("   等级：%d\n", player.level);
@@ -3048,7 +2782,7 @@ void show_status() {
     printf("   连续登录：%d 天\n", player.consecutive_days);
     printf("   游戏天数：%d 天\n", player.day_count);
     printf("   总任务完成：%d 次\n", player.lifetime_task_completions);
-    printf("   今日任务：%d/10\n", player.daily_task_completions);
+    printf("   今日任务：%d\n", player.daily_task_completions);
     printf("   公司等级：%s\n", player.company_levels[player.current_company_level].name);
     printf("   声望等级：%d\n", player.prestige_level);
     
@@ -3071,7 +2805,7 @@ void show_status() {
     if (player.has_premium) {
         time_t remaining = player.premium_until - time(NULL);
         if (remaining > 0) {
-            printf(COLOR_YELLOW "   会员剩余：%ld 天\n" COLOR_RESET, remaining / 86400 + 1);
+            printf(COLOR_YELLOW "   ?? 会员剩余：%ld 天\n" COLOR_RESET, remaining / 86400 + 1);
         } else {
             player.has_premium = false;
         }
@@ -3083,12 +2817,12 @@ void show_status() {
 
 void show_skills() {
     CLEAR_SCREEN();
-    draw_box("技能系统");
+    draw_box("?? 技能系统");
     
     printf("可用技能点：%d\n\n", player.skill_points);
     
     for (int i = 0; i < MAX_SKILLS; i++) {
-        Skill *skill = &player.skills[i];
+        Skill* skill = &player.skills[i];
         
         const char* color = COLOR_WHITE;
         if (skill->level >= 15) color = COLOR_YELLOW;
@@ -3108,9 +2842,9 @@ void show_skills() {
     }
     
     draw_separator();
-    printf("1. 速度  2. 力量  3. 智力  4. 幸运  5. 魅力\n");
-    printf("6. 耐力  7. 创造力 8. 领导力 9. 谈判  10. 管理\n");
-    printf("0. 返回\n");
+    printf("1.速度 2.力量 3.智力 4.幸运 5.魅力\n");
+    printf("6.耐力 7.创造力 8.领导力 9.谈判 10.管理\n");
+    printf("0.返回\n");
     draw_separator();
     
     int choice = get_valid_input(0, 10);
@@ -3122,7 +2856,7 @@ void show_skills() {
 
 void show_inventory() {
     CLEAR_SCREEN();
-    draw_box("背包物品");
+    draw_box("?? 背包物品");
     
     if (player.inventory_count == 0) {
         printf("背包空空如也...\n");
@@ -3130,7 +2864,7 @@ void show_inventory() {
         printf("物品数量：%d/%d\n\n", player.inventory_count, MAX_INVENTORY);
         
         for (int i = 0; i < player.inventory_count; i++) {
-            InventoryItem *item = &player.inventory[i];
+            InventoryItem* item = &player.inventory[i];
             
             const char* color = COLOR_WHITE;
             switch (item->rarity) {
@@ -3169,7 +2903,7 @@ void show_inventory() {
         int item_choice = get_valid_input(1, player.inventory_count);
         use_inventory_item(item_choice - 1);
     } else if (choice == 2) {
-        print_colored(COLOR_GREEN, "背包已整理！\n");
+        print_colored(COLOR_GREEN, "? 背包已整理！\n");
     } else if (choice == 3) {
         craft_item();
     }
@@ -3179,7 +2913,7 @@ void show_inventory() {
 void use_inventory_item(int item_index) {
     if (item_index < 0 || item_index >= player.inventory_count) return;
     
-    InventoryItem *item = &player.inventory[item_index];
+    InventoryItem* item = &player.inventory[item_index];
     
     if (item->quantity <= 0) {
         print_colored(COLOR_RED, "? 物品数量不足！\n");
@@ -3198,9 +2932,15 @@ void use_inventory_item(int item_index) {
         print_colored(COLOR_GREEN, "? 使用能量大补丸，恢复50点能量！\n");
     } else if (strcmp(item->name, "彩票") == 0) {
         player.lottery_tickets++;
-        print_colored(COLOR_GREEN, "? 获得1张彩票！\n");
+        print_colored(COLOR_GREEN, "?? 获得1张彩票！\n");
     } else if (strcmp(item->name, "宠物食品") == 0) {
-        print_colored(COLOR_GREEN, "? 请在宠物界面喂食\n");
+        print_colored(COLOR_GREEN, "?? 请在宠物界面喂食\n");
+        item->quantity++; // 不减，因为没使用
+        return;
+    } else if (strcmp(item->name, "高级宠物粮") == 0) {
+        print_colored(COLOR_GREEN, "?? 请在宠物界面喂食\n");
+        item->quantity++;
+        return;
     } else {
         print_colored(COLOR_YELLOW, "? 该物品无法使用\n");
     }
@@ -3215,12 +2955,13 @@ void use_inventory_item(int item_index) {
 
 void show_quests() {
     CLEAR_SCREEN();
-    draw_box("任务列表");
+    draw_box("?? 任务列表");
     
     int active_count = 0;
     for (int i = 0; i < MAX_QUESTS; i++) {
         if (!player.active_quests[i].completed && 
-            (player.active_quests[i].deadline == 0 || player.active_quests[i].deadline > time(NULL))) {
+            (player.active_quests[i].deadline == 0 || player.active_quests[i].deadline > time(NULL)) &&
+            player.active_quests[i].assigned_time != 0) {
             active_count++;
         }
     }
@@ -3228,9 +2969,9 @@ void show_quests() {
     printf("进行中的任务：%d\n\n", active_count);
     
     for (int i = 0; i < MAX_QUESTS; i++) {
-        Quest *quest = &player.active_quests[i];
+        Quest* quest = &player.active_quests[i];
         
-        if (quest->deadline == 0 && quest->assigned_time == 0) continue;
+        if (quest->assigned_time == 0) continue;
         
         if (quest->completed) {
             printf(COLOR_GREEN "? %s\n" COLOR_RESET, quest->name);
@@ -3239,15 +2980,15 @@ void show_quests() {
             printf(COLOR_RED "? %s\n" COLOR_RESET, quest->name);
             printf("   已过期\n");
         } else {
-            printf(COLOR_CYAN "● %s\n" COLOR_RESET, quest->name);
+            printf(COLOR_CYAN "?? %s\n" COLOR_RESET, quest->name);
             printf("   %s\n", quest->description);
             printf("   进度：%d/%d\n", quest->progress, quest->requirement);
             
             if (quest->deadline != 0) {
                 time_t remaining = quest->deadline - time(NULL);
                 if (remaining > 0) {
-                    int days = remaining / 86400;
-                    int hours = (remaining % 86400) / 3600;
+                    int days = (int)(remaining / 86400);
+                    int hours = (int)((remaining % 86400) / 3600);
                     printf("   剩余时间：%d天%d小时\n", days, hours);
                 }
             }
@@ -3272,36 +3013,33 @@ void show_quests() {
 
 void show_pets() {
     CLEAR_SCREEN();
-    draw_box("宠物系统");
+    draw_box("?? 宠物系统");
     
     printf("已解锁宠物：%d/%d\n\n", player.pet_count, MAX_PETS);
     
+    const char* pet_type_names[] = {"猫咪", "狗狗", "鹦鹉", "龙", "凤凰"};
+    
     for (int i = 0; i < MAX_PETS; i++) {
-        Pet *pet = &player.pets[i];
+        Pet* pet = &player.pets[i];
         
         if (pet->is_unlocked) {
             printf("?? %s\n", pet->name);
-            printf("   类型：");
-            switch (pet->type) {
-                case PET_CAT: printf("猫咪"); break;
-                case PET_DOG: printf("狗狗"); break;
-                case PET_PARROT: printf("鹦鹉"); break;
-                case PET_DRAGON: printf("龙"); break;
-                case PET_PHOENIX: printf("凤凰"); break;
-            }
+            printf("   类型：%s\n", pet_type_names[pet->type]);
             printf("   等级：%d\n", pet->level);
-            printf("   快乐度："); print_progress_bar(pet->happiness, 100, 20);
-            printf("   饱食度："); print_progress_bar(pet->hunger, 100, 20);
-            printf("   加成倍数：%.1f\n\n", pet->bonus_multiplier);
+            printf("   快乐度：");
+            print_progress_bar(pet->happiness, 100, 20);
+            printf("\n   饱食度：");
+            print_progress_bar(pet->hunger, 100, 20);
+            printf("\n   加成倍数：%.2f\n\n", pet->bonus_multiplier);
         } else {
             printf("?? 未解锁宠物\n");
-            printf("   解锁条件：");
+            printf("   类型：%s\n", pet_type_names[i]);
             switch (i) {
-                case 1: printf("达到等级5，5000坤币"); break;
-                case 2: printf("达到等级15，50000坤币"); break;
-                case 3: printf("达到等级30，500000坤币"); break;
-                case 4: printf("达到等级50，5000000坤币"); break;
-                default: printf("未知"); break;
+                case 1: printf("   解锁条件：达到等级5，5000坤币"); break;
+                case 2: printf("   解锁条件：达到等级15，50000坤币"); break;
+                case 3: printf("   解锁条件：达到等级30，500000坤币"); break;
+                case 4: printf("   解锁条件：达到等级50，5000000坤币"); break;
+                default: printf("   初始宠物"); break;
             }
             printf("\n\n");
         }
@@ -3315,7 +3053,7 @@ void show_pets() {
     if (choice > 0) {
         if (player.pet_count == 0) {
             print_colored(COLOR_RED, "? 没有宠物！\n");
-        } else {
+        } else if (choice <= 2) {
             printf("选择宠物 (1-%d): ", player.pet_count);
             int pet_choice = get_valid_input(1, player.pet_count);
             int idx = -1;
@@ -3328,17 +3066,10 @@ void show_pets() {
                 }
             }
             if (idx >= 0) {
-                switch (choice) {
-                    case 1:
-                        feed_pet(idx);
-                        break;
-                    case 2:
-                        play_with_pet(idx);
-                        break;
-                }
+                if (choice == 1) feed_pet(idx);
+                else play_with_pet(idx);
             }
-        }
-        if (choice == 3) {
+        } else if (choice == 3) {
             printf("选择要领养的宠物类型：\n");
             printf("1. 狗狗（等级5，5000坤币）\n");
             printf("2. 鹦鹉（等级15，50000坤币）\n");
@@ -3347,7 +3078,7 @@ void show_pets() {
             printf("0. 返回\n");
             int type_choice = get_valid_input(0, 4);
             if (type_choice > 0) {
-                adopt_pet((PetType)(type_choice));
+                adopt_pet((PetType)type_choice);
             }
         }
     }
@@ -3356,16 +3087,16 @@ void show_pets() {
 
 void show_company() {
     CLEAR_SCREEN();
-    draw_box("公司管理");
+    draw_box("?? 公司管理");
     
-    CompanyLevel *current = &player.company_levels[player.current_company_level];
+    CompanyLevel* current = &player.company_levels[player.current_company_level];
     
     printf(COLOR_BOLD "当前公司：%s\n" COLOR_RESET, current->name);
     printf("   %s\n", current->description);
     printf("   收入倍数：%.1f\n", current->income_multiplier);
     
     if (player.current_company_level < MAX_COMPANY_LEVELS - 1) {
-        CompanyLevel *next = &player.company_levels[player.current_company_level + 1];
+        CompanyLevel* next = &player.company_levels[player.current_company_level + 1];
         printf(COLOR_BOLD "\n下一等级：%s\n" COLOR_RESET, next->name);
         printf("   %s\n", next->description);
         printf("   升级需要：%lld 坤币\n", next->required_coins);
@@ -3396,22 +3127,16 @@ void show_company() {
 
 void show_stock_market() {
     CLEAR_SCREEN();
-    draw_box("股票市场");
+    draw_box("?? 股票市场");
+    
+    update_stock_prices();
     
     time_t now = time(NULL);
-    printf("当前时间：%s", ctime(&now));
+    printf("更新时间：%s", ctime(&now));
     printf("\n");
     
     for (int i = 0; i < 5; i++) {
-        Stock *stock = &player.stocks[i];
-        
-        if (now - stock->last_update > 60) {
-            int change = (rand() % (stock->volatility * 2 + 1)) - stock->volatility;
-            stock->current_price += change;
-            if (stock->current_price < 10) stock->current_price = 10;
-            stock->price_change = change;
-            stock->last_update = now;
-        }
+        Stock* stock = &player.stocks[i];
         
         printf("%s\n", stock->name);
         printf("   当前价格：%d 坤币\n", stock->current_price);
@@ -3424,7 +3149,7 @@ void show_stock_market() {
         } else {
             printf("   涨跌：0\n");
         }
-        printf("   波动率：%d\n", stock->volatility);
+        printf("   波动率：%d%%\n", stock->volatility);
         printf("   持有数量：%d\n", player.invested_stocks[i]);
         if (player.invested_stocks[i] > 0) {
             int total_value = player.invested_stocks[i] * stock->current_price;
@@ -3451,16 +3176,18 @@ void show_stock_market() {
         }
     } else if (choice == 3) {
         for (int i = 0; i < 5; i++) {
-            player.stocks[i].last_update = 0; // 强制刷新
+            player.stocks[i].last_update = time(NULL) - 61;
+            player.stocks[i].price_change = 0;
         }
-        print_colored(COLOR_GREEN, "行情已刷新！\n");
+        update_stock_prices();
+        print_colored(COLOR_GREEN, "? 行情已刷新！\n");
     }
     press_any_key();
 }
 
 void show_properties() {
     CLEAR_SCREEN();
-    draw_box("房产投资");
+    draw_box("?? 房产投资");
     
     printf("已拥有房产：%d/10\n\n", player.property_count);
     
@@ -3472,14 +3199,14 @@ void show_properties() {
     printf("当前每日被动收入：%.0f 坤币\n\n", daily_passive);
     
     for (int i = 0; i < 10; i++) {
-        Property *prop = &available_properties[i];
+        Property* prop = &available_properties[i];
         
         if (prop->owned) {
-            printf(COLOR_GREEN "? %s\n" COLOR_RESET, prop->name);
+            printf(COLOR_GREEN "?? %s\n" COLOR_RESET, prop->name);
             printf("   %s\n", prop->description);
             printf("   被动收入：%.0f 坤币/天\n", prop->passive_income);
         } else {
-            printf(COLOR_WHITE "● %s\n" COLOR_RESET, prop->name);
+            printf(COLOR_WHITE "?? %s\n" COLOR_RESET, prop->name);
             printf("   %s\n", prop->description);
             printf("   价格：%lld 坤币\n", prop->coins_needed);
             printf("   建造时间：%d 天\n", prop->days_needed);
@@ -3503,7 +3230,7 @@ void show_properties() {
 
 void show_prestige_menu() {
     CLEAR_SCREEN();
-    draw_box("声望系统");
+    draw_box("? 声望系统");
     
     printf("当前声望等级：%d\n", player.prestige_level);
     printf("声望点数：%d\n\n", player.prestige_points);
@@ -3520,19 +3247,17 @@ void show_prestige_menu() {
         printf("   - 拥有100万坤币\n");
         printf("   - 解锁20个成就\n");
         
-        bool can_prestige = player.level >= 50 && 
-                           player.kun_coins >= 1000000;
         int unlocked_achievements = 0;
         for (int i = 0; i < MAX_ACHIEVEMENTS; i++) {
             if (player.achievements[i].unlocked) unlocked_achievements++;
         }
-        can_prestige = can_prestige && (unlocked_achievements >= 20);
+        
+        bool can_prestige = (player.level >= 50 && player.kun_coins >= 1000000 && unlocked_achievements >= 20);
         
         if (can_prestige) {
             print_colored(COLOR_GREEN, "\n? 满足声望重置条件！\n");
         } else {
             print_colored(COLOR_RED, "\n? 不满足声望重置条件\n");
-            printf("   需要：等级50，100万坤币，20个成就\n");
         }
     } else {
         printf("声望等级 %d 奖励：\n", player.prestige_level);
@@ -3558,16 +3283,32 @@ void show_prestige_menu() {
         if (choice == 1) {
             prestige();
         } else if (choice == 2) {
-            // 声望商店
             CLEAR_SCREEN();
-            draw_box("声望商店");
+            draw_box("?? 声望商店");
             printf("1. 永久会员折扣 - 500声望\n");
             printf("2. 开局资金翻倍 - 200声望\n");
             printf("3. 额外技能点+10 - 300声望\n");
             printf("0. 返回\n");
             int shop_choice = get_valid_input(0, 3);
-            // 实现略
-            print_colored(COLOR_YELLOW, "暂未开放\n");
+            if (shop_choice == 1 && player.prestige_points >= 500) {
+                player.prestige_points -= 500;
+                if (!player.has_premium) {
+                    buy_premium(36500);
+                } else {
+                    player.premium_until = time(NULL) + (time_t)36500 * 86400;
+                    print_colored(COLOR_GREEN, "? 会员已延长至永久！\n");
+                }
+            } else if (shop_choice == 2 && player.prestige_points >= 200) {
+                player.prestige_points -= 200;
+                player.kun_coins += 500;
+                print_colored(COLOR_GREEN, "? 获得500坤币开局资金加成！\n");
+            } else if (shop_choice == 3 && player.prestige_points >= 300) {
+                player.prestige_points -= 300;
+                player.skill_points += 10;
+                print_colored(COLOR_GREEN, "? 获得10技能点！\n");
+            } else if (shop_choice > 0) {
+                print_colored(COLOR_RED, "? 声望点数不足！\n");
+            }
         }
     }
     press_any_key();
@@ -3576,69 +3317,62 @@ void show_prestige_menu() {
 void show_main_menu() {
     CLEAR_SCREEN();
     printf(COLOR_YELLOW COLOR_BOLD);
-    printf("  ╔════════════════════════════════════════════════════════════════╗\n");
-    printf("  ║                                                                ║\n");
-    printf("  ║                        打工模拟器 v2.0 - 豪华版                ║\n");
-    printf("  ║                                                                ║\n");
-    printf("  ╚════════════════════════════════════════════════════════════════╝\n");
+    printf("  ╔════════════════════════════════════════════════════════════════════════════╗\n");
+    printf("  ║                                                                            ║\n");
+    printf("  ║                         打工模拟器 v3.0 - 完整版                           ║\n");
+    printf("  ║                                                                            ║\n");
+    printf("  ╚════════════════════════════════════════════════════════════════════════════╝\n");
     printf(COLOR_RESET "\n");
-    // printf(COLOR_CYAN);
-    // printf("╔══════════════════════════════════════════════════════════════╗\n");
-    // printf("║                                                              ║\n");
-    // printf("║    ███████╗██╗    ██╗ █████╗ ██╗  ██╗███████╗███╗   ███╗     ║\n");
-    // printf("║    ██╔════╝██║    ██║██╔══██╗██║ ██╔╝██╔════╝████╗ ████║     ║\n");
-    // printf("║    █████╗  ██║ █╗ ██║███████║█████╔╝ █████╗  ██╔████╔██║     ║\n");
-    // printf("║    ██╔══╝  ██║███╗██║██╔══██║██╔═██╗ ██╔══╝  ██║╚██╔╝██║     ║\n");
-    // printf("║    ██║     ╚███╔███╔╝██║  ██║██║  ██╗███████╗██║ ╚═╝ ██║     ║\n");
-    // printf("║    ╚═╝      ╚══╝╚══╝ ╚═╝  ╚═╝╚═╝  ╚═╝╚══════╝╚═╝     ╚═╝     ║\n");
-    // printf("║                                                              ║\n");
-    // printf("║                 打工模拟器 v2.0 - 豪华版                      ║\n");
-    // printf("║                                                              ║\n");
-    // printf("╚══════════════════════════════════════════════════════════════╝\n");
-    // printf(COLOR_RESET);
     
-    printf("\n");
     printf(COLOR_BOLD "?? 玩家状态：" COLOR_RESET);
-    printf("等级 %d | 坤币 %lld | 能量 %d/%d\n\n", 
-           player.level, player.kun_coins, player.energy, player.max_energy);
+    printf("等级 %d | 坤币 %lld | 能量 %d/%d | 声望 %d\n\n", 
+           player.level, player.kun_coins, player.energy, player.max_energy, player.prestige_level);
     
     draw_separator();
     printf(COLOR_BOLD "?? 主菜单\n" COLOR_RESET);
-    printf("1.  ?? 查看状态\n");
-    printf("2.  ?? 打工赚钱\n");
-    printf("3.  ?? 商城购物\n");
-    printf("4.  ?? 技能系统\n");
-    printf("5.  ?? 背包物品\n");
-    printf("6.  ?? 任务列表\n");
-    printf("7.  ?? 宠物系统\n");
-    printf("8.  ?? 公司管理\n");
-    printf("9.  ?? 股票市场\n");
-    printf("10. ?? 房产投资\n");
-    printf("11. ?? 成就系统\n");
-    printf("12. ? 声望系统\n");
-    printf("13. ?? 好友系统\n");
-    printf("14. ?? 游戏统计\n");
-    printf("15. ?? 会员商城\n");
-    printf("16. ?? 游戏设置\n");
-    printf("17. ?? 帮助指南\n");
-    printf("18. ?? 保存游戏\n");
-    printf("0.  ?? 退出游戏\n");
+    printf("┌─────────────────────┬─────────────────────┬─────────────────────┐\n");
+    printf("│ 1. ?? 查看状态      │ 2. ?? 打工赚钱      │ 3. ?? 商城购物      │\n");
+    printf("│ 4. ?? 技能系统      │ 5. ?? 背包物品      │ 6. ?? 任务列表      │\n");
+    printf("│ 7. ?? 宠物系统      │ 8. ?? 公司管理      │ 9. ?? 股票市场      │\n");
+    printf("│10. ?? 房产投资      │11. ?? 成就系统      │12. ? 声望系统      │\n");
+    printf("│13. ?? 好友系统      │14. ?? 游戏统计      │15. ?? 会员商城      │\n");
+    printf("│16. ?? 游戏设置      │17. ?? 帮助指南      │18. ?? 保存游戏      │\n");
+    printf("│                     │ 0. ?? 退出游戏      │                     │\n");
+    printf("└─────────────────────┴─────────────────────┴─────────────────────┘\n");
     draw_separator();
     
     show_active_events();
 }
 
+//================ 主函数 ================
 int main() {
     enable_ansi();
     show_loading_screen(2000);
     
     init_game();
     
+    time_t last_passive_time = time(NULL);
+    time_t last_save_time = time(NULL);
+    
     while (1) {
         show_main_menu();
         
         printf("请输入选项: ");
         int choice = get_valid_input(0, 18);
+        
+        // 自动保存和被动收入
+        time_t now = time(NULL);
+        if (now - last_passive_time >= 3600) {
+            calculate_passive_income();
+            last_passive_time = now;
+        }
+        if (now - last_save_time >= 300) {  // 每5分钟自动保存
+            save_game();
+            last_save_time = now;
+        }
+        
+        // 能量恢复
+        recover_energy();
         
         switch (choice) {
             case 1:
@@ -3647,11 +3381,11 @@ int main() {
                 break;
             case 2: {
                 CLEAR_SCREEN();
-                draw_box("任务中心");
+                draw_box("?? 任务中心");
                 
                 printf("可用任务：\n\n");
                 for (int i = 0; i < MAX_TASKS; i++) {
-                    Task *task = &tasks[i];
+                    Task* task = &tasks[i];
                     
                     if (task->is_unlocked) {
                         printf("%d. %s\n", i + 1, task->name);
@@ -3684,11 +3418,11 @@ int main() {
             }
             case 3: {
                 CLEAR_SCREEN();
-                draw_box("商城");
+                draw_box("?? 商城");
                 
                 printf("可用物品：\n\n");
                 for (int i = 0; i < MAX_MARKET; i++) {
-                    MarketItem *item = &market[i];
+                    MarketItem* item = &market[i];
                     
                     printf("%d. %s\n", i + 1, item->name);
                     
@@ -3714,14 +3448,6 @@ int main() {
                     printf("   等级要求：%d\n", item->required_level);
                     printf("   被动收入：%.1f 坤币/小时\n", item->passive_income);
                     printf("   描述：%s\n", item->description);
-                    
-                    if (item->is_limited) {
-                        time_t remaining = item->available_until - time(NULL);
-                        if (remaining > 0) {
-                            int days = remaining / 86400;
-                            printf("   ? 限定物品，剩余 %d 天\n", days);
-                        }
-                    }
                     printf("\n");
                 }
                 
@@ -3784,54 +3510,21 @@ int main() {
                 break;
             case 0:
                 CLEAR_SCREEN();
-                printf("感谢游玩打工模拟器 v2.0！\n");
-                printf("记得常回来打工哦！\n");
+                printf(COLOR_YELLOW "\n");
+                printf("  ╔════════════════════════════════════════════════════════════╗\n");
+                printf("  ║                                                                ║\n");
+                printf("  ║                    感谢游玩打工模拟器 v3.0！                   ║\n");
+                printf("  ║                                                                ║\n");
+                printf("  ║                      记得常回来打工哦！                         ║\n");
+                printf("  ║                                                                ║\n");
+                printf("  ╚════════════════════════════════════════════════════════════╝\n");
+                printf(COLOR_RESET "\n");
                 save_game();
                 return 0;
         }
         
         // 随机事件
         random_event();
-        
-        // 自动恢复能量
-        static time_t last_energy_recovery = 0;
-        time_t now = time(NULL);
-        if (now - last_energy_recovery >= 600) {
-            if (player.energy < player.max_energy) {
-                int recovery = 1;
-                if (player.has_premium) recovery = 2;
-                player.energy += recovery;
-                if (player.energy > player.max_energy) player.energy = player.max_energy;
-            }
-            last_energy_recovery = now;
-        }
-        
-        // 被动收入（每小时）
-        static time_t last_passive = 0;
-        if (now - last_passive >= 3600) {
-            money_t passive = 0;
-            for (int i = 0; i < player.furniture_count; i++) {
-                for (int j = 0; j < MAX_MARKET; j++) {
-                    if (strcmp(player.furniture[i], market[j].name) == 0) {
-                        passive += (money_t)(market[j].passive_income);
-                        break;
-                    }
-                }
-            }
-            // 房产被动收入
-            for (int i = 0; i < player.property_count; i++) {
-                passive += (money_t)(player.properties[i].passive_income);
-            }
-            // 管理技能加成
-            passive = (money_t)(passive * pow(player.skills[SKILL_MANAGEMENT].multiplier, player.skills[SKILL_MANAGEMENT].level - 1));
-            
-            if (passive > 0) {
-                player.kun_coins += passive;
-                player.total_income += passive;
-                printf(COLOR_GREEN "\n?? 被动收入 +%lld 坤币\n" COLOR_RESET, passive);
-            }
-            last_passive = now;
-        }
         
         // 更新游戏时间
         static time_t last_update = 0;
