@@ -1,13 +1,12 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-打工模拟器存档修改器 v2.0
-支持修改 kun_save.dat 文件
+打工模拟器存档修改器 v2.1
+支持修改 worker_sim_save.dat 文件
 基于 Player 结构体精确偏移量计算 (Windows x64 MSVC)
 
 存档格式: [4字节版本号(int)] + [Player结构体]
-Player大小: 37648 bytes (对齐8)
-存档总大小: 37652 bytes
+存档版本: v4
 """
 
 import struct
@@ -26,13 +25,15 @@ INVENTORY_ITEM_SIZE = 176
 STOCK_SIZE = 56
 PROPERTY_SIZE = 160
 FRIEND_SIZE = 56
-PLAYER_SIZE = 37648
-SAVE_VERSION = 3
-SAVE_HEADER_SIZE = 4  # 版本号4字节
+CHAT_MESSAGE_SIZE = 240
+CHATTER_SIZE = 144
+PLAYER_SIZE = 38360  # 更新：新增了hunger, health, spirit等字段
+SAVE_VERSION = 4
+SAVE_HEADER_SIZE = 4
 
 # ==================== 字段偏移量 (相对于Player结构体起始位置) ====================
-# 注意: 存档文件中 Player 数据从偏移 SAVE_HEADER_SIZE(4) 开始
 OFFSETS = {
+    # 原有字段
     'kun_coins': 0,
     'kun_exp': 8,
     'level': 12,
@@ -81,14 +82,26 @@ OFFSETS = {
     'boss_defeats': 37636,
     'festival_participations': 37640,
     'craft_count': 37644,
+    
+    # 新增字段 (v4)
+    'hunger': 37648,           # 饱食度
+    'health': 37652,          # 血量
+    'spirit': 37656,          # 精神
+    'is_hallucinating': 37660,# 幻觉状态
+    'hallucination_end': 37664,# 幻觉结束时间
+    'sudden_death_chance': 37672, # 猝死几率
+    'hallu_count': 37676,     # 幻觉触发次数
+    'has_phone': 37680,       # 是否有手机
+    'in_chat_room': 37684,    # 是否在聊天室
+    'chat_history': 37688,    # 聊天历史 (50*240=12000)
+    'chat_message_count': 49688, # 消息数量
+    'chatters': 49692,        # 聊天室人物 (8*144=1152)
+    'chatter_count': 50844,   # 人物数量
 }
 
 # ==================== 字段类型定义 ====================
-# 'q' = int64 (money_t, time_t)
-# 'i' = int32 (int, enum)
-# '?' = bool (1字节)
 FIELD_TYPES = {
-    # 8字节字段 (money_t = long long, time_t)
+    # 8字节字段
     'kun_coins': 'q',
     'last_login': 'q',
     'event_end_time': 'q',
@@ -96,8 +109,9 @@ FIELD_TYPES = {
     'total_income': 'q',
     'total_expenses': 'q',
     'premium_until': 'q',
+    'hallucination_end': 'q',
 
-    # 4字节字段 (int, enum)
+    # 4字节字段
     'kun_exp': 'i',
     'level': 'i',
     'energy': 'i',
@@ -125,10 +139,20 @@ FIELD_TYPES = {
     'boss_defeats': 'i',
     'festival_participations': 'i',
     'craft_count': 'i',
+    'hunger': 'i',           # 新增
+    'health': 'i',           # 新增
+    'spirit': 'i',           # 新增
+    'sudden_death_chance': 'i',  # 新增
+    'hallu_count': 'i',      # 新增
+    'has_phone': 'i',        # 新增
+    'in_chat_room': 'i',     # 新增
+    'chat_message_count': 'i', # 新增
+    'chatter_count': 'i',    # 新增
 
-    # 1字节字段 (bool)
+    # 1字节字段
     'is_billionaire': '?',
     'has_premium': '?',
+    'is_hallucinating': '?', # 新增
 }
 
 # ==================== 可读写的基本字段列表 ====================
@@ -154,17 +178,24 @@ BASIC_FIELDS = [
     ('craft_count', '合成次数'),
     ('has_premium', '高级会员'),
     ('is_billionaire', '亿万富翁'),
+    
+    # 新增状态字段
+    ('hunger', '饱食度'),
+    ('health', '血量'),
+    ('spirit', '精神'),
+    ('is_hallucinating', '幻觉状态'),
+    ('has_phone', '是否有手机'),
 ]
 
 
 class KunSaveEditor:
-    def __init__(self, save_file: str = "kun_save.dat"):
+    def __init__(self, save_file: str = "worker_sim_save.dat"):
         self.save_file = save_file
-        self.data = None  # 完整的存档文件数据
+        self.data = None
         self.version = None
 
     def _player_offset(self, field: str) -> int:
-        """获取字段在存档文件中的绝对偏移量 (含4字节版本头)"""
+        """获取字段在存档文件中的绝对偏移量"""
         if field not in OFFSETS:
             raise ValueError(f"未知字段: {field}")
         return SAVE_HEADER_SIZE + OFFSETS[field]
@@ -179,7 +210,6 @@ class KunSaveEditor:
             with open(self.save_file, 'rb') as f:
                 self.data = bytearray(f.read())
 
-            # 读取版本号
             if len(self.data) < SAVE_HEADER_SIZE:
                 print("错误: 存档文件损坏 (太小)")
                 return False
@@ -192,7 +222,9 @@ class KunSaveEditor:
                 print("  可能是旧版本存档，部分字段可能无法读取")
 
             if self.version != SAVE_VERSION:
-                print(f"警告: 存档版本为 v{self.version}，当前为 v{SAVE_VERSION}，可能不兼容")
+                print(f"警告: 存档版本为 v{self.version}，当前为 v{SAVE_VERSION}")
+                if self.version == 3:
+                    print("  提示: v3存档可以继续使用，但新字段将使用默认值")
 
             print(f"成功加载存档，文件大小: {len(self.data)} 字节，版本: v{self.version}")
             return True
@@ -211,6 +243,9 @@ class KunSaveEditor:
             expected_size = SAVE_HEADER_SIZE + PLAYER_SIZE
             if len(self.data) < expected_size:
                 self.data.extend(b'\x00' * (expected_size - len(self.data)))
+
+            # 更新版本号
+            struct.pack_into('<i', self.data, 0, SAVE_VERSION)
 
             # 备份原文件
             if os.path.exists(self.save_file):
@@ -241,6 +276,12 @@ class KunSaveEditor:
         try:
             offset = self._player_offset(field)
             fmt = FIELD_TYPES[field]
+            
+            # 检查偏移量是否在数据范围内
+            if offset + struct.calcsize('<' + fmt) > len(self.data):
+                print(f"警告: 字段 {field} 超出数据范围，返回默认值")
+                return 0 if fmt != '?' else False
+            
             value = struct.unpack_from('<' + fmt, self.data, offset)[0]
             return value
         except Exception as e:
@@ -273,8 +314,19 @@ class KunSaveEditor:
                     value = int(value)
             else:  # 'i'
                 value = int(value)
+                # 值域限制
+                if field in ['hunger', 'health', 'spirit']:
+                    if value < 0: value = 0
+                    if value > 100: value = 100
 
             offset = self._player_offset(field)
+            
+            # 检查偏移量
+            if offset + struct.calcsize('<' + fmt) > len(self.data):
+                # 扩展数据
+                needed = offset + struct.calcsize('<' + fmt) - len(self.data)
+                self.data.extend(b'\x00' * needed)
+            
             packed = struct.pack('<' + fmt, value)
             self.data[offset:offset + len(packed)] = packed
 
@@ -285,24 +337,25 @@ class KunSaveEditor:
             return False
 
     def read_furniture(self, index: int = 0) -> Optional[str]:
-        """读取家具名称 (索引 0-49)"""
+        """读取家具名称"""
         if index < 0 or index >= 50:
             print("错误: 家具索引必须在 0-49 之间")
             return None
 
         offset = self._player_offset('furniture') + index * 50
         try:
+            if offset + 50 > len(self.data):
+                return None
             name_bytes = self.data[offset:offset + 50]
             end = name_bytes.find(b'\0')
             if end != -1:
                 name_bytes = name_bytes[:end]
             return name_bytes.decode('utf-8', errors='ignore')
         except Exception as e:
-            print(f"读取家具失败: {e}")
             return None
 
     def write_furniture(self, index: int, name: str) -> bool:
-        """写入家具名称 (索引 0-49)"""
+        """写入家具名称"""
         if index < 0 or index >= 50:
             print("错误: 家具索引必须在 0-49 之间")
             return False
@@ -310,6 +363,9 @@ class KunSaveEditor:
         offset = self._player_offset('furniture') + index * 50
         try:
             name_bytes = name.encode('utf-8')[:49]
+            if offset + 50 > len(self.data):
+                needed = offset + 50 - len(self.data)
+                self.data.extend(b'\x00' * needed)
             self.data[offset:offset + len(name_bytes)] = name_bytes
             self.data[offset + len(name_bytes):offset + 50] = b'\0' * (50 - len(name_bytes))
             print(f"成功设置家具[{index}] = {name}")
@@ -367,6 +423,25 @@ class KunSaveEditor:
                     display = str(value)
                 print(f"  {label:12}: {display}")
 
+        # 显示状态字段
+        print(f"\n  {'状态':12}:")
+        hunger = self.read_value('hunger')
+        health = self.read_value('health')
+        spirit = self.read_value('spirit')
+        hallucinating = self.read_value('is_hallucinating')
+        has_phone = self.read_value('has_phone')
+        
+        if hunger is not None:
+            print(f"    饱食度: {hunger}/100")
+        if health is not None:
+            print(f"    血量: {health}/100")
+        if spirit is not None:
+            print(f"    精神: {spirit}/100")
+        if hallucinating is not None:
+            print(f"    幻觉状态: {'是' if hallucinating else '否'}")
+        if has_phone is not None:
+            print(f"    手机: {'有' if has_phone else '无'}")
+
         # 显示家具
         count = self.get_furniture_count()
         if count > 0:
@@ -387,7 +462,8 @@ class KunSaveEditor:
             '2': ('满级', {'level': 100, 'kun_exp': 0}),
             '3': ('无限能量', {'energy': 9999, 'max_energy': 9999}),
             '4': ('全技能点', {'skill_points': 999}),
-            '5': ('解锁所有', {
+            '5': ('全状态满', {'hunger': 100, 'health': 100, 'spirit': 50, 'is_hallucinating': False}),
+            '6': ('解锁所有', {
                 'current_company_level': 9,
                 'prestige_level': 5,
                 'prestige_points': 9999,
@@ -396,12 +472,13 @@ class KunSaveEditor:
                 'mystery_keys': 99,
                 'boss_defeats': 99,
                 'craft_count': 999,
+                'has_phone': True,
             }),
-            '6': ('高级会员', {
+            '7': ('高级会员', {
                 'has_premium': True,
-                'premium_until': 'now',  # 设置为当前时间
+                'premium_until': 'now',
             }),
-            '7': ('重置存档', {
+            '8': ('重置存档', {
                 'level': 1,
                 'kun_coins': 100,
                 'kun_exp': 0,
@@ -410,6 +487,11 @@ class KunSaveEditor:
                 'skill_points': 0,
                 'prestige_level': 0,
                 'prestige_points': 0,
+                'hunger': 100,
+                'health': 100,
+                'spirit': 50,
+                'is_hallucinating': False,
+                'has_phone': True,
             }),
         }
 
@@ -417,7 +499,7 @@ class KunSaveEditor:
         for key, (name, _) in presets.items():
             print(f"    {key}. {name}")
 
-        choice = input("\n  选择预设 (1-7) 或直接回车跳过: ").strip()
+        choice = input("\n  选择预设 (1-8) 或直接回车跳过: ").strip()
         if choice in presets:
             name, values = presets[choice]
             print(f"\n  应用预设: {name}")
@@ -430,17 +512,18 @@ class KunSaveEditor:
         """交互式修改模式"""
         while True:
             print("\n" + "=" * 60)
-            print("  存档修改器 - 交互模式")
+            print("  存档修改器 v2.1 - 交互模式")
             print("=" * 60)
             print("  1. 显示当前状态")
             print("  2. 修改基本属性")
             print("  3. 修改家具")
             print("  4. 应用预设作弊")
-            print("  5. 保存并退出")
-            print("  6. 退出不保存")
+            print("  5. 修改状态属性 (饱食度/血量/精神)")
+            print("  6. 保存并退出")
+            print("  7. 退出不保存")
             print("=" * 60)
 
-            choice = input("  请选择 (1-6): ").strip()
+            choice = input("  请选择 (1-7): ").strip()
 
             if choice == '1':
                 self.show_status()
@@ -449,11 +532,11 @@ class KunSaveEditor:
                 print("\n  可修改的基本属性:")
                 for i, (field, name) in enumerate(BASIC_FIELDS, 1):
                     value = self.read_value(field)
-                    if field in ('has_premium', 'is_billionaire'):
+                    if field in ('has_premium', 'is_billionaire', 'is_hallucinating'):
                         display = "是" if value else "否"
                     else:
                         display = str(value) if value is not None else "N/A"
-                    print(f"  {i:2}. {name:12} ({field:30}): {display}")
+                    print(f"  {i:2}. {name:12} : {display}")
 
                 print("\n  输入要修改的编号 (或直接输入字段名): ", end='')
                 field_input = input().strip()
@@ -471,7 +554,7 @@ class KunSaveEditor:
                 field_names = [f[0] for f in BASIC_FIELDS]
                 if field in field_names:
                     current = self.read_value(field)
-                    if field in ('has_premium', 'is_billionaire'):
+                    if field in ('has_premium', 'is_billionaire', 'is_hallucinating'):
                         print(f"  当前值: {'是' if current else '否'}，输入新值 (true/false/1/0): ", end='')
                     else:
                         print(f"  当前值: {current}，输入新值: ", end='')
@@ -528,11 +611,32 @@ class KunSaveEditor:
                 self.preset_cheats()
 
             elif choice == '5':
+                print("\n  修改状态属性:")
+                hunger = self.read_value('hunger')
+                health = self.read_value('health')
+                spirit = self.read_value('spirit')
+                print(f"  当前饱食度: {hunger}/100")
+                print(f"  当前血量: {health}/100")
+                print(f"  当前精神: {spirit}/100")
+                
+                new_hunger = input("  输入新饱食度 (0-100，回车跳过): ").strip()
+                if new_hunger and new_hunger.isdigit():
+                    self.write_value('hunger', int(new_hunger))
+                
+                new_health = input("  输入新血量 (0-100，回车跳过): ").strip()
+                if new_health and new_health.isdigit():
+                    self.write_value('health', int(new_health))
+                
+                new_spirit = input("  输入新精神 (0-100，回车跳过): ").strip()
+                if new_spirit and new_spirit.isdigit():
+                    self.write_value('spirit', int(new_spirit))
+
+            elif choice == '6':
                 if self.save_save():
                     print("  修改已保存!")
                 break
 
-            elif choice == '6':
+            elif choice == '7':
                 print("  修改已丢弃")
                 break
 
@@ -543,20 +647,22 @@ class KunSaveEditor:
 def find_save_file() -> str:
     """自动查找存档文件"""
     possible_paths = [
-        os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'kun_save.dat'),
-        'kun_save.dat',
-        os.path.join(os.path.dirname(os.path.abspath(__file__)), 'kun_save.dat'),
+        os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'worker_sim_save.dat'),
+        'worker_sim_save.dat',
+        os.path.join(os.path.dirname(os.path.abspath(__file__)), 'worker_sim_save.dat'),
+        'kun_save.dat',  # 兼容旧名称
     ]
     for path in possible_paths:
         if os.path.exists(path):
             return os.path.normpath(path)
-    return 'kun_save.dat'
+    return 'worker_sim_save.dat'
 
 
 def main():
     print("=" * 60)
-    print("  打工模拟器存档修改器 v2.0")
+    print("  打工模拟器存档修改器 v2.1")
     print(f"  目标存档大小: {SAVE_HEADER_SIZE + PLAYER_SIZE} 字节 (v{SAVE_VERSION})")
+    print("  支持新特性: 饱食度/血量/精神系统")
     print("=" * 60)
 
     save_file = find_save_file()
@@ -566,7 +672,7 @@ def main():
         print(f"  未找到默认存档文件")
         save_file = input("  请输入存档文件路径: ").strip()
         if not save_file:
-            save_file = "kun_save.dat"
+            save_file = "worker_sim_save.dat"
 
     editor = KunSaveEditor(save_file)
 
@@ -574,7 +680,6 @@ def main():
         print("  无法加载存档，创建新存档吗？ (y/n): ", end='')
         if input().strip().lower() == 'y':
             editor.data = bytearray(SAVE_HEADER_SIZE + PLAYER_SIZE)
-            # 写入版本号
             struct.pack_into('<i', editor.data, 0, SAVE_VERSION)
             print(f"  已创建新存档数据 ({len(editor.data)} 字节)")
         else:
