@@ -119,7 +119,7 @@ class GameMemoryDebugger:
         process_ids = (ctypes.wintypes.DWORD * 1024)()
         cb_needed = ctypes.wintypes.DWORD()
         
-        if not self.psapi.EnumProcesses(ctypes.byref(process_ids), ctypes.sizeof(process_ids), ctypes.byref(cb_needed)):
+        if not self.psapi.EnumProcesses(process_ids, ctypes.sizeof(process_ids), ctypes.byref(cb_needed)):
             return None
         
         num_processes = cb_needed.value // ctypes.sizeof(ctypes.wintypes.DWORD)
@@ -181,7 +181,7 @@ class GameMemoryDebugger:
         print("[!] 或手动输入基址偏移")
         
         # 提供手动输入选项
-        addr_input = input("[?] 请输入Player结构体地址 (十六进制，如 0x12345678，直接回车使用默认偏移): ").strip()
+        addr_input = input("[?] 请输入Player结构体地址 (十六进制，如 0x12345678): ").strip()
         
         if addr_input:
             try:
@@ -195,18 +195,7 @@ class GameMemoryDebugger:
                 print("[-] 地址格式错误")
                 return False
         
-        # 尝试通过GetModuleHandle获取模块基址
-        print("[*] 尝试获取模块基址...")
-        try:
-            # 获取kernel32模块句柄
-            kernel32 = self.kernel32.GetModuleHandleW(None)
-            if kernel32:
-                print(f"[+] 模块基址: 0x{kernel32:X}")
-            else:
-                print("[-] 无法获取模块基址")
-        except:
-            pass
-        
+        print("[-] 未输入地址")
         return False
     
     def read_memory(self, address: int, size: int) -> Optional[bytes]:
@@ -476,9 +465,15 @@ class GameMemoryDebugger:
         print("=" * 50)
         
         if not self.attach_process():
-            print("[!] 请确保游戏已启动，或手动输入Player地址")
-            if not self.find_player_address():
-                return
+            print("[!] 附加进程失败")
+            return
+        
+        # 强制要求输入Player地址
+        print("\n[必要] 需要知道Player结构体的内存地址才能操作。")
+        print("[提示] 用Cheat Engine找到坤币的地址（初始500），那就是Player地址。")
+        if not self.find_player_address():
+            print("[!] 未提供有效地址，调试器无法工作")
+            return
         
         while True:
             print("\n" + "=" * 50)
@@ -500,31 +495,23 @@ class GameMemoryDebugger:
             
             if choice == '1':
                 self.show_current_status()
-            
             elif choice == '2':
                 self.simulate_hunger_system()
-            
             elif choice == '3':
                 self.simulate_health_system()
-            
             elif choice == '4':
                 self.simulate_spirit_system()
-            
             elif choice == '5':
                 self.simulate_od_event()
-            
             elif choice == '6':
                 self.simulate_tongcheng_event()
-            
             elif choice == '7':
                 val = input("输入要冻结的精神值 (默认50): ").strip()
                 target = int(val) if val.isdigit() else 50
                 self.freeze_spirit(target)
-            
             elif choice == '8':
                 val = input("是否开启幻觉状态? (y/n): ").strip().lower()
                 self.write_field('is_hallucinating', 1 if val == 'y' else 0)
-            
             elif choice == '9':
                 print("清除所有异常状态...")
                 self.write_field('hunger', 80)
@@ -533,13 +520,11 @@ class GameMemoryDebugger:
                 self.write_field('is_hallucinating', 0)
                 self.write_field('sudden_death_chance', 0)
                 print("[+] 已恢复所有状态到正常水平")
-            
             elif choice == '0':
                 if self.process_handle:
                     self.kernel32.CloseHandle(self.process_handle)
                 print("[+] 已断开连接")
                 break
-            
             else:
                 print("[-] 无效选项")
     
