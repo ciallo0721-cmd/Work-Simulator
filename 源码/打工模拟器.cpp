@@ -1731,23 +1731,51 @@
      if (player.spirit < 0) player.spirit = 0;
  }
  
- void recover_health() {
-     static time_t last_health_recovery = 0;
-     time_t now = time(NULL);
-     
-     if (last_health_recovery == 0) {
-         last_health_recovery = now;
-     }
-     
-     // 每小时恢复5点血量
-     int hours_passed = (int)((now - last_health_recovery) / 3600);
-     if (hours_passed > 0 && player.health < 100) {
-         player.health += hours_passed * 5;
-         if (player.health > 100) player.health = 100;
-         last_health_recovery = now;
-         print_colored(COLOR_GREEN, "\n?? 自然恢复：+%d 血量\n", hours_passed * 5);
-     }
- }
+void recover_health() {
+    static time_t last_health_recovery = 0;
+    time_t now = time(NULL);
+    
+    if (last_health_recovery == 0) {
+        last_health_recovery = now;
+    }
+    
+    // 每小时恢复5点血量
+    int hours_passed = (int)((now - last_health_recovery) / 3600);
+    if (hours_passed > 0) {
+        // 恢复血量
+        if (player.health < 100) {
+            player.health += hours_passed * 5;
+            if (player.health > 100) player.health = 100;
+            print_colored(COLOR_GREEN, "\n?? 自然恢复：+%d 血量\n", hours_passed * 5);
+        }
+        
+        // ===== 完善游戏系统：饱食度自然下降 =====
+        // 每小时饱食度下降3点
+        int hunger_loss = hours_passed * 3;
+        if (player.hunger > 0) {
+            player.hunger -= hunger_loss;
+            if (player.hunger < 0) player.hunger = 0;
+            print_colored(COLOR_YELLOW, "\n?? 饥饿：饱食度-%d\n", hunger_loss);
+            
+            if (player.hunger <= 0) {
+                print_colored(COLOR_RED, "\n??? 你已经饿昏了！\n");
+                // 饿昏了扣血
+                player.health -= 5;
+                if (player.health < 0) player.health = 0;
+            } else if (player.hunger < 20) {
+                print_colored(COLOR_RED, "? 你非常饥饿！快去买食物！\n");
+            }
+        }
+        
+        // 精神值缓慢恢复
+        if (player.spirit < 100) {
+            player.spirit += hours_passed * 2;
+            if (player.spirit > 100) player.spirit = 100;
+        }
+        
+        last_health_recovery = now;
+    }
+}
  
  void buy_food() {
      CLEAR_SCREEN();
@@ -1875,125 +1903,245 @@
  }
  
  //================ 聊天室功能 ================
- void show_phone_menu() {
-     if (!player.has_phone) {
-         print_colored(COLOR_RED, "? 你还没有手机！\n");
-         print_colored(COLOR_YELLOW, "? 可以在商城中购买手机。\n");
-         press_any_key();
-         return;
-     }
-     
-     while (1) {
-         CLEAR_SCREEN();
-         draw_box("?? 手机");
-         
-         printf("1. 进入聊天室\n");
-         printf("2. 查看聊天记录\n");
-         printf("3. 购买食物\n");
-         printf("4. 使用食物\n");
-         printf("0. 返回\n");
-         draw_separator();
-         
-         int choice = get_valid_input(0, 4);
-         
-         switch (choice) {
-             case 1:
-                 show_chat_room();
-                 break;
-             case 2:
-                 CLEAR_SCREEN();
-                 draw_box("?? 聊天记录");
-                 show_chat_messages();
-                 press_any_key();
-                 break;
-             case 3:
-                 buy_food();
-                 break;
-             case 4:
-                 eat_food();
-                 break;
-             case 0:
-                 return;
-         }
-     }
- }
+void show_phone_menu() {
+    if (!player.has_phone) {
+        print_colored(COLOR_RED, "? 你还没有手机！\n");
+        print_colored(COLOR_YELLOW, "? 可以在商城中购买手机。\n");
+        press_any_key();
+        return;
+    }
+    
+    while (1) {
+        CLEAR_SCREEN();
+        draw_box("?? 手机");
+        
+        printf("1. 进入聊天室\n");
+        printf("2. 查看聊天记录\n");
+        printf("3. 使用食物\n");
+        printf("0. 返回\n");
+        draw_separator();
+        
+        int choice = get_valid_input(0, 3);
+        
+        switch (choice) {
+            case 1:
+                show_chat_room();
+                break;
+            case 2:
+                CLEAR_SCREEN();
+                draw_box("?? 聊天记录");
+                show_chat_messages();
+                press_any_key();
+                break;
+            case 3:
+                eat_food();
+                break;
+            case 0:
+                return;
+        }
+    }
+}
  
- void show_chat_room() {
-     char input[200];
-     
-     while (1) {
-         CLEAR_SCREEN();
-         draw_box("?? 聊天室");
-         
-         // 显示在线人数
-         int online = 0;
-         for (int i = 0; i < player.chatter_count; i++) {
-             if (player.chatters[i].is_online) online++;
-         }
-         printf("在线: %d人\n\n", online);
-         
-         // 显示最近消息
-         show_chat_messages();
-         
-         draw_separator();
-         printf("命令：@用户名 内容  /quit 退出\n");
-         printf("输入消息: ");
-         
-         if (fgets(input, sizeof(input), stdin) == NULL) {
-             break;
-         }
-         
-         // 去除换行符
-         input[strcspn(input, "\n")] = '\0';
-         
-         if (strcmp(input, "/quit") == 0) {
-             break;
-         }
-         
-         // 添加到聊天历史
-         add_chat_message("你", input, CHATTER_NORMAL);
-         
-         // 检查是否@某人
-         if (input[0] == '@') {
-             char target_name[30];
-             char message[170];
-             if (sscanf(input, "@%s %[^\n]", target_name, message) == 2) {
-                 // 查找目标
-                 for (int i = 0; i < player.chatter_count; i++) {
-                     if (strcmp(player.chatters[i].name, target_name) == 0) {
-                         // AI响应
-                         ai_chatter_response(i, message);
-                         
-                         // 特殊处理：黑产的OD提议
-                         if (player.chatters[i].type == CHATTER_BLACKMARKET &&
-                             (strstr(message, "OD") || strstr(message, "药物") || 
-                              strstr(message, "试试") || strstr(message, "东西"))) {
-                             process_od_offer(i);
-                         }
-                         
-                         // 特殊处理：同城的见面邀请
-                         if (player.chatters[i].type == CHATTER_TONGCHENG &&
-                             (strstr(message, "约") || strstr(message, "见面") ||
-                              strstr(message, "出来") || strstr(message, "一起"))) {
-                             process_tongcheng_offer(i);
-                         }
-                         break;
-                     }
-                 }
-             } else {
-                 add_chat_message("系统", "格式错误：@用户名 内容", CHATTER_NORMAL);
-             }
-         } else {
-             // 随机AI回复（10%概率）
-             if (rand() % 100 < 10) {
-                 int chatter_idx = rand() % player.chatter_count;
-                 ai_chatter_response(chatter_idx, input);
-             }
-         }
-         
-         press_any_key();
-     }
- }
+void show_chat_room() {
+    char input[200];
+    static time_t last_auto_chat = 0;
+    static int waiting_for_agreement = -1;  // -1表示没有等待同意，否则是chatter索引
+    
+    // 自动发言消息池
+    const char* auto_messages[] = {
+        "大家好啊~",
+        "今天天气不错",
+        "有人在吗？",
+        "我刚发现一个好玩的东西",
+        "你们觉得这个游戏怎么样？",
+        "有没有人想聊天？",
+        "我快饿死了",
+        "工作好累啊",
+        "有没有人想一起做任务？",
+        "有人想交易吗？",
+        "我有个好东西，有人要吗？",
+        "你们都是在哪里工作的？"
+    };
+    int num_auto_messages = sizeof(auto_messages) / sizeof(auto_messages[0]);
+    
+    // 系统刷新消息池
+    const char* system_messages[] = {
+        "系统：聊天室定时清理完成",
+        "系统：欢迎新用户加入",
+        "系统：请注意文明聊天",
+        "系统：服务器即将维护，请保存聊天记录"
+    };
+    int num_system_messages = sizeof(system_messages) / sizeof(system_messages[0]);
+    
+    while (1) {
+        CLEAR_SCREEN();
+        draw_box("?? 聊天室");
+        
+        // 显示在线人数
+        int online = 0;
+        for (int i = 0; i < player.chatter_count; i++) {
+            if (player.chatters[i].is_online) online++;
+        }
+        printf("在线: %d人\n\n", online);
+        
+        // 显示最近消息
+        show_chat_messages();
+        
+        // ===== 功能1：自动有人说话 =====
+        time_t now = time(NULL);
+        if (now - last_auto_chat >= 8 || (rand() % 100 < 35 && now - last_auto_chat >= 3)) {
+            int chatter_idx = rand() % player.chatter_count;
+            if (player.chatters[chatter_idx].is_online) {
+                int msg_idx = rand() % num_auto_messages;
+                add_chat_message(player.chatters[chatter_idx].name, auto_messages[msg_idx], player.chatters[chatter_idx].type);
+            }
+            last_auto_chat = now;
+        }
+        
+        // ===== 功能4：随机刷新 =====
+        if (rand() % 100 < 15) {
+            int msg_idx = rand() % num_system_messages;
+            add_chat_message("系统", system_messages[msg_idx], CHATTER_NORMAL);
+        }
+        
+        draw_separator();
+        
+        // 如果正在等待同意/拒绝，提示用户
+        if (waiting_for_agreement >= 0) {
+            printf(COLOR_YELLOW "【%s 正在等待你的回复...】\n" COLOR_RESET, player.chatters[waiting_for_agreement].name);
+            printf("请输入：同意 或 拒绝 | /quit 退出\n");
+        } else {
+            printf("命令：@用户名 内容 | 同意/拒绝 | /quit 退出\n");
+        }
+        printf("输入消息: ");
+        
+        if (fgets(input, sizeof(input), stdin) == NULL) break;
+        input[strcspn(input, "\n")] = '\0';
+        
+        // ===== 功能3：不能发送空白 =====
+        // 检查是否是空白消息（空或只有空格）
+        bool all_spaces = true;
+        for (int i = 0; input[i] != '\0'; i++) {
+            if (input[i] != ' ' && input[i] != '\t' && input[i] != '\n' && input[i] != '\r') {
+                all_spaces = false;
+                break;
+            }
+        }
+        if (strlen(input) == 0 || all_spaces) {
+            add_chat_message("系统", "? 不能发送空白消息！", CHATTER_NORMAL);
+            continue;
+        }
+        
+        if (strcmp(input, "/quit") == 0) break;
+        
+        // ===== 功能2：@人物同意机制 =====
+        // 处理等待同意/拒绝的状态
+        if (waiting_for_agreement >= 0) {
+            if (strcmp(input, "同意") == 0 || strcmp(input, "同意") == 0) {
+                add_chat_message("你", "同意", CHATTER_NORMAL);
+                
+                // 根据chatter类型处理同意后的逻辑
+                ChatterType type = player.chatters[waiting_for_agreement].type;
+                if (type == CHATTER_SCAMMER) {
+                    // 骗子：扣100 coin
+                    if (player.kun_coins >= 100) {
+                        player.kun_coins -= 100;
+                        add_chat_message(player.chatters[waiting_for_agreement].name, "哈哈，谢谢你的100坤币！你真是个好人~", type);
+                        print_colored(COLOR_RED, "? 你被骗子骗了100坤币！\n");
+                    } else {
+                        add_chat_message(player.chatters[waiting_for_agreement].name, "哼，没钱还说什么同意？滚！", type);
+                    }
+                } else if (type == CHATTER_BLACKMARKET) {
+                    process_od_offer(waiting_for_agreement);
+                } else if (type == CHATTER_TONGCHENG) {
+                    process_tongcheng_offer(waiting_for_agreement);
+                } else {
+                    add_chat_message(player.chatters[waiting_for_agreement].name, "谢谢你的同意！你真好~", type);
+                }
+                
+                waiting_for_agreement = -1;
+                press_any_key();
+                continue;
+            } else if (strcmp(input, "拒绝") == 0 || strcmp(input, "拒绝") == 0) {
+                add_chat_message("你", "拒绝", CHATTER_NORMAL);
+                add_chat_message(player.chatters[waiting_for_agreement].name, "好吧，没关系...", player.chatters[waiting_for_agreement].type);
+                waiting_for_agreement = -1;
+                press_any_key();
+                continue;
+            } else {
+                add_chat_message("系统", "? 请输入 同意 或 拒绝", CHATTER_NORMAL);
+                continue;
+            }
+        }
+        
+        // 添加到聊天历史
+        add_chat_message("你", input, CHATTER_NORMAL);
+        
+        // 检查是否@某人
+        if (input[0] == '@') {
+            char target_name[30];
+            char message[170];
+            
+            // 尝试解析 @用户名 内容
+            if (sscanf(input, "@%s %[^\n]", target_name, message) >= 1) {
+                // 查找目标
+                for (int i = 0; i < player.chatter_count; i++) {
+                    if (strcmp(player.chatters[i].name, target_name) == 0) {
+                        // AI响应
+                        if (strlen(message) > 0) {
+                            ai_chatter_response(i, message);
+                        } else {
+                            // 只@了人名，没有消息
+                            ai_chatter_response(i, "你好");
+                        }
+                        
+                        // ===== @人物同意机制 =====
+                        // 50%概率让对方提出需要同意的请求
+                        if (rand() % 100 < 50) {
+                            const char* requests[] = {
+                                "我能向你借点钱吗？",
+                                "你能帮我做个任务吗？",
+                                "我想和你做个交易，可以吗？",
+                                "你能帮我个忙吗？"
+                            };
+                            int req_idx = rand() % (sizeof(requests) / sizeof(requests[0]));
+                            add_chat_message(player.chatters[i].name, requests[req_idx], player.chatters[i].type);
+                            waiting_for_agreement = i;
+                        }
+                        
+                        // 特殊处理：黑产的OD提议
+                        if (player.chatters[i].type == CHATTER_BLACKMARKET &&
+                            (strstr(message, "OD") || strstr(message, "药物") || 
+                             strstr(message, "试试") || strstr(message, "东西"))) {
+                            process_od_offer(i);
+                        }
+                        
+                        // 特殊处理：同城的见面邀请
+                        if (player.chatters[i].type == CHATTER_TONGCHENG &&
+                            (strstr(message, "约") || strstr(message, "见面") ||
+                             strstr(message, "出来") || strstr(message, "一起"))) {
+                            process_tongcheng_offer(i);
+                        }
+                        
+                        break;
+                    }
+                }
+            } else {
+                add_chat_message("系统", "? 格式错误：请使用 @用户名 内容", CHATTER_NORMAL);
+            }
+        } else {
+            // 随机AI回复（10%概率）
+            if (rand() % 100 < 10) {
+                int chatter_idx = rand() % player.chatter_count;
+                if (player.chatters[chatter_idx].is_online) {
+                    ai_chatter_response(chatter_idx, input);
+                }
+            }
+        }
+        
+        press_any_key();
+    }
+}
  
  //================ 成就系统 ================
  void check_achievements() {
@@ -3462,70 +3610,108 @@ void buy_premium(int duration_days) {
      draw_separator();
  }
  
- void show_status() {
-     CLEAR_SCREEN();
-     draw_box("?? 玩家状态");
-     
-     printf(COLOR_BOLD "?? 基本信息\n" COLOR_RESET);
-     printf("   等级：%d\n", player.level);
-     printf("   经验：%d/%d\n", player.kun_exp, player.level * 100);
-     printf("   坤币：%lld\n", player.kun_coins);
-     printf("   能量：%d/%d\n", player.energy, player.max_energy);
-     printf("   技能点：%d\n", player.skill_points);
-     printf("   成就点：%d\n", player.achievement_points);
-     
-     printf(COLOR_BOLD "\n?? 游戏进度\n" COLOR_RESET);
-     printf("   连续登录：%d 天\n", player.consecutive_days);
-     printf("   游戏天数：%d 天\n", player.day_count);
-     printf("   总任务完成：%d 次\n", player.lifetime_task_completions);
-     printf("   今日任务：%d\n", player.daily_task_completions);
-     printf("   公司等级：%s\n", player.company_levels[player.current_company_level].name);
-     printf("   声望等级：%d\n", player.prestige_level);
-     
-     printf(COLOR_BOLD "\n?? 资产统计\n" COLOR_RESET);
-     printf("   总收入：%lld 坤币\n", player.total_income);
-     printf("   总支出：%lld 坤币\n", player.total_expenses);
-     printf("   净资产：%lld 坤币\n", player.total_income - player.total_expenses);
-     printf("   家具数量：%d/%d\n", player.furniture_count, MAX_FURNITURE);
-     printf("   宠物数量：%d/%d\n", player.pet_count, MAX_PETS);
-     printf("   房产数量：%d/10\n", player.property_count);
-     
-     printf(COLOR_BOLD "\n?? 状态\n" COLOR_RESET);
-     printf("   饱食度：%d/100", player.hunger);
-     if (player.hunger < 20) print_colored(COLOR_RED, " [饥饿]");
-     printf("\n");
-     printf("   血量：%d/100", player.health);
-     if (player.health < 30) print_colored(COLOR_RED, " [重伤]");
-     printf("\n");
-     printf("   精神：%d/100", player.spirit);
-     if (player.spirit < 20) print_colored(COLOR_RED, " [精神错乱]");
-     else if (player.spirit > 78) print_colored(COLOR_YELLOW, " [异常兴奋]");
-     printf("\n");
-     
-     printf(COLOR_BOLD "\n?? 当前季节：" COLOR_RESET);
-     switch (player.current_season) {
-         case SEASON_SPRING: printf("春季\n"); break;
-         case SEASON_SUMMER: printf("夏季\n"); break;
-         case SEASON_AUTUMN: printf("秋季\n"); break;
-         case SEASON_WINTER: printf("冬季\n"); break;
-     }
-     
-     if (player.has_premium) {
-         time_t remaining = player.premium_until - time(NULL);
-         if (remaining > 0) {
-             printf(COLOR_YELLOW "   [会员] 剩余：%ld 天\n" COLOR_RESET, remaining / 86400 + 1);
-         } else {
-             player.has_premium = false;
-         }
-     }
-     
-     if (player.is_hallucinating) {
-         print_colored(COLOR_RED, "\n[幻觉状态] 文字可能会变成乱码！\n");
-     }
-     
-     show_active_events();
-     draw_separator();
- }
+void show_status() {
+    CLEAR_SCREEN();
+    draw_box("?? 玩家状态");
+    
+    printf(COLOR_BOLD "?? 基本信息\n" COLOR_RESET);
+    printf("   等级：%d\n", player.level);
+    
+    // 经验进度条
+    int exp_max = player.level * 100;
+    int bar_len = 20;
+    printf("   经验：");
+    int filled = (exp_max > 0) ? player.kun_exp * bar_len / exp_max : 0;
+    if (filled > bar_len) filled = bar_len;
+    for (int i = 0; i < bar_len; i++) {
+        if (i < filled) printf("#");
+        else printf("-");
+    }
+    printf(COLOR_CYAN " %d/%d\n" COLOR_RESET, player.kun_exp, exp_max);
+    
+    printf("   坤币：%lld\n", player.kun_coins);
+    printf("   能量：%d/%d\n", player.energy, player.max_energy);
+    printf("   技能点：%d\n", player.skill_points);
+    printf("   成就点：%d\n", player.achievement_points);
+    
+    printf(COLOR_BOLD "\n?? 游戏进度\n" COLOR_RESET);
+    printf("   连续登录：%d 天\n", player.consecutive_days);
+    printf("   游戏天数：%d 天\n", player.day_count);
+    printf("   总任务完成：%d 次\n", player.lifetime_task_completions);
+    printf("   今日任务：%d\n", player.daily_task_completions);
+    printf("   公司等级：%s\n", player.company_levels[player.current_company_level].name);
+    printf("   声望等级：%d\n", player.prestige_level);
+    
+    printf(COLOR_BOLD "\n?? 资产统计\n" COLOR_RESET);
+    printf("   总收入：%lld 坤币\n", player.total_income);
+    printf("   总支出：%lld 坤币\n", player.total_expenses);
+    printf("   净资产：%lld 坤币\n", player.total_income - player.total_expenses);
+    printf("   家具数量：%d/%d\n", player.furniture_count, MAX_FURNITURE);
+    printf("   宠物数量：%d/%d\n", player.pet_count, MAX_PETS);
+    printf("   房产数量：%d/10\n", player.property_count);
+    
+    printf(COLOR_BOLD "\n?? 生存状态\n" COLOR_RESET);
+    
+    // 饱食度进度条
+    printf("   饱食度：");
+    filled = player.hunger * bar_len / 100;
+    for (int i = 0; i < bar_len; i++) {
+        if (i < filled) printf("#");
+        else printf("-");
+    }
+    if (player.hunger < 20) print_colored(COLOR_RED, " %d/100 [饥饿!]");
+    else if (player.hunger < 50) print_colored(COLOR_YELLOW, " %d/100");
+    else print_colored(COLOR_GREEN, " %d/100");
+    printf("\n");
+    
+    // 血量进度条
+    printf("   血量：  ");
+    filled = player.health * bar_len / 100;
+    for (int i = 0; i < bar_len; i++) {
+        if (i < filled) printf("#");
+        else printf("-");
+    }
+    if (player.health < 30) print_colored(COLOR_RED, " %d/100 [重伤!]");
+    else if (player.health < 60) print_colored(COLOR_YELLOW, " %d/100");
+    else print_colored(COLOR_GREEN, " %d/100");
+    printf("\n");
+    
+    // 精神进度条
+    printf("   精神：  ");
+    filled = player.spirit * bar_len / 100;
+    for (int i = 0; i < bar_len; i++) {
+        if (i < filled) printf("#");
+        else printf("-");
+    }
+    if (player.spirit < 20) print_colored(COLOR_RED, " %d/100 [精神错乱!]");
+    else if (player.spirit > 78) print_colored(COLOR_MAGENTA, " %d/100 [异常兴奋]");
+    else print_colored(COLOR_CYAN, " %d/100");
+    printf("\n");
+    
+    printf(COLOR_BOLD "\n?? 当前季节：" COLOR_RESET);
+    switch (player.current_season) {
+        case SEASON_SPRING: printf("春季\n"); break;
+        case SEASON_SUMMER: printf("夏季\n"); break;
+        case SEASON_AUTUMN: printf("秋季\n"); break;
+        case SEASON_WINTER: printf("冬季\n"); break;
+    }
+    
+    if (player.has_premium) {
+        time_t remaining = player.premium_until - time(NULL);
+        if (remaining > 0) {
+            printf(COLOR_YELLOW "   [会员] 剩余：%ld 天\n" COLOR_RESET, remaining / 86400 + 1);
+        } else {
+            player.has_premium = false;
+        }
+    }
+    
+    if (player.is_hallucinating) {
+        print_colored(COLOR_RED, "\n[幻觉状态] 文字可能会变成乱码！\n");
+    }
+    
+    show_active_events();
+    draw_separator();
+}
  
  void show_inventory() {
      CLEAR_SCREEN();
@@ -3999,65 +4185,121 @@ void show_prestige_menu() {
     press_any_key();
 }
  
- void show_main_menu() {
-     CLEAR_SCREEN();
-     
-     // 幻觉效果影响菜单显示
-     if (player.is_hallucinating) {
-         printf(COLOR_RED);
-         printf("  ╔════════════════════════════════════════════════════════════════════════════╗\n");
-         printf("  ║                              工???? ???? v3.0                            ║\n");
-         printf("  ║                                                                            ║\n");
-         printf("  ╚════════════════════════════════════════════════════════════════════════════╝\n");
-         printf(COLOR_RESET "\n");
-         
-         printf(COLOR_BOLD "?? ?????????" COLOR_RESET);
-         printf("??? %d | ???? %lld | ???? %d/%d | ???? %d\n\n", 
-                player.level, player.kun_coins, player.energy, player.max_energy, player.prestige_level);
-     } else {
-         printf(COLOR_YELLOW COLOR_BOLD);
-         printf("  ╔════════════════════════════════════════════════════════════════════════════╗\n");
-         printf("  ║                                                                            ║\n");
-         printf("  ║                         打工模拟器 v3.0 - 完整版                           ║\n");
-         printf("  ║                                                                            ║\n");
-         printf("  ╚════════════════════════════════════════════════════════════════════════════╝\n");
-         printf(COLOR_RESET "\n");
-         
-         printf(COLOR_BOLD "?? 玩家状态：" COLOR_RESET);
-         printf("等级 %d | 坤币 %lld | 能量 %d/%d | 声望 %d\n\n", 
-                player.level, player.kun_coins, player.energy, player.max_energy, player.prestige_level);
-     }
-     
-     draw_separator();
-     printf(COLOR_BOLD "?? 主菜单\n" COLOR_RESET);
-     printf("┌─────────────────────┬─────────────────────┬─────────────────────┐\n");
-     printf("│ 1. ?? 查看状态      │ 2. ?? 打工赚钱      │ 3. ?? 商城购物      │\n");
-     printf("│ 4. ?? 技能系统      │ 5. ?? 背包物品      │ 6. ?? 任务列表      │\n");
-     printf("│ 7. ?? 宠物系统      │ 8. ?? 公司管理      │ 9. ?? 股票市场      │\n");
-     printf("│10. ?? 房产投资      │11. ?? 成就系统      │12. ? 声望系统      │\n");
-     printf("│13. ?? 好友系统      │14. ?? 游戏统计      │15. ?? 会员商城      │\n");
-     printf("│16. ?? 游戏设置      │17. ?? 帮助指南      │18. ?? 保存游戏      │\n");
-     printf("│19. ?? 手机          │                     │                     │\n");
-     printf("│                     │ 0. ?? 退出游戏      │                     │\n");
-     printf("└─────────────────────┴─────────────────────┴─────────────────────┘\n");
-     draw_separator();
-     
-     show_active_events();
-     
-     // 显示状态警告
-     if (player.hunger < 20) {
-         print_colored(COLOR_RED, "? 警告：你非常饥饿！请尽快进食！\n");
-     }
-     if (player.health < 30) {
-         print_colored(COLOR_RED, "? 警告：你身受重伤！请及时休息！\n");
-     }
-     if (player.spirit < 20) {
-         print_colored(COLOR_RED, "? 警告：你的精神处于崩溃边缘！\n");
-     }
-     if (player.spirit > 78) {
-         print_colored(COLOR_YELLOW, "? 警告：你过于兴奋！小心身体！\n");
-     }
- }
+void show_main_menu() {
+    CLEAR_SCREEN();
+    
+    // 幻觉效果影响菜单显示
+    if (player.is_hallucinating) {
+        printf(COLOR_RED);
+        printf("  ╔════════════════════════════════════════════════════════════════════════════╗\n");
+        printf("  ║                              工???? ???? v3.0                            ║\n");
+        printf("  ║                                                                            ║\n");
+        printf("  ╚════════════════════════════════════════════════════════════════════════════╝\n");
+        printf(COLOR_RESET "\n");
+        
+        printf(COLOR_BOLD "?? ?????????" COLOR_RESET);
+        printf("??? %d | ???? %lld | ???? %d/%d | ???? %d\n\n", 
+               player.level, player.kun_coins, player.energy, player.max_energy, player.prestige_level);
+    } else {
+        printf(COLOR_YELLOW COLOR_BOLD);
+        printf("  ╔════════════════════════════════════════════════════════════════════════════╗\n");
+        printf("  ║                                                                            ║\n");
+        printf("  ║                         打工模拟器 v3.0 - 完整版                           ║\n");
+        printf("  ║                                                                            ║\n");
+        printf("  ╚════════════════════════════════════════════════════════════════════════════╝\n");
+        printf(COLOR_RESET "\n");
+        
+        // ===== 显示所有状态值 =====
+        printf(COLOR_BOLD "?? 玩家信息：" COLOR_RESET);
+        printf("等级 %d | 坤币 %lld | 能量 %d/%d | 声望 %d\n", 
+               player.level, player.kun_coins, player.energy, player.max_energy, player.prestige_level);
+        
+        // 显示饱食度（带进度条）
+        printf("  饱食度: ");
+        int bar_len = 20;
+        int filled = player.hunger * bar_len / 100;
+        for (int i = 0; i < bar_len; i++) {
+            if (i < filled) printf("#");
+            else printf("-");
+        }
+        if (player.hunger < 20) printf(COLOR_RED " %d/100 [饥饿!]" COLOR_RESET, player.hunger);
+        else if (player.hunger < 50) printf(COLOR_YELLOW " %d/100" COLOR_RESET, player.hunger);
+        else printf(COLOR_GREEN " %d/100" COLOR_RESET, player.hunger);
+        printf("\n");
+        
+        // 显示血量（带进度条）
+        printf("  血量:   ");
+        filled = player.health * bar_len / 100;
+        for (int i = 0; i < bar_len; i++) {
+            if (i < filled) printf("#");
+            else printf("-");
+        }
+        if (player.health < 30) printf(COLOR_RED " %d/100 [重伤!]" COLOR_RESET, player.health);
+        else if (player.health < 60) printf(COLOR_YELLOW " %d/100" COLOR_RESET, player.health);
+        else printf(COLOR_GREEN " %d/100" COLOR_RESET, player.health);
+        printf("\n");
+        
+        // 显示精神值（带进度条）
+        printf("  精神:   ");
+        filled = player.spirit * bar_len / 100;
+        for (int i = 0; i < bar_len; i++) {
+            if (i < filled) printf("#");
+            else printf("-");
+        }
+        if (player.spirit < 20) printf(COLOR_RED " %d/100 [崩溃!]" COLOR_RESET, player.spirit);
+        else if (player.spirit > 78) printf(COLOR_MAGENTA " %d/100 [兴奋]" COLOR_RESET, player.spirit);
+        else printf(COLOR_CYAN " %d/100" COLOR_RESET, player.spirit);
+        printf("\n");
+        
+        // 显示经验值（带进度条）
+        printf("  经验:   ");
+        int exp_max = player.level * 100;
+        filled = (exp_max > 0) ? player.kun_exp * bar_len / exp_max : 0;
+        if (filled > bar_len) filled = bar_len;
+        for (int i = 0; i < bar_len; i++) {
+            if (i < filled) printf("#");
+            else printf("-");
+        }
+        printf(COLOR_CYAN " %d/%d" COLOR_RESET, player.kun_exp, exp_max);
+        printf("\n\n");
+    }
+    
+    draw_separator();
+    printf(COLOR_BOLD "?? 主菜单\n" COLOR_RESET);
+    printf("┌─────────────────────┬─────────────────────┬─────────────────────┐\n");
+    printf("│ 1. ?? 查看状态      │ 2. ?? 打工赚钱      │ 3. ?? 商城购物      │\n");
+    printf("│ 4. ?? 技能系统      │ 5. ?? 背包物品      │ 6. ?? 任务列表      │\n");
+    printf("│ 7. ?? 宠物系统      │ 8. ?? 公司管理      │ 9. ?? 股票市场      │\n");
+    printf("│10. ?? 房产投资      │11. ?? 成就系统      │12. ? 声望系统      │\n");
+    printf("│13. ?? 好友系统      │14. ?? 游戏统计      │15. ?? 会员商城      │\n");
+    printf("│16. ?? 游戏设置      │17. ?? 帮助指南      │18. ?? 保存游戏      │\n");
+    printf("│19. ?? 手机          │                     │                     │\n");
+    printf("│                     │ 0. ?? 退出游戏      │                     │\n");
+    printf("└─────────────────────┴─────────────────────┴─────────────────────┘\n");
+    draw_separator();
+    
+    show_active_events();
+    
+    // 显示状态警告（增强版）
+    if (player.hunger < 20) {
+        print_colored(COLOR_RED, "? 警告：你非常饥饿！饱食度%d/100，请尽快去商城买食物！\n", player.hunger);
+    } else if (player.hunger < 40) {
+        print_colored(COLOR_YELLOW, "? 提示：你有点饿了（饱食度%d/100），建议去商城买食物。\n", player.hunger);
+    }
+    if (player.health < 30) {
+        print_colored(COLOR_RED, "? 警告：你身受重伤！血量%d/100，请及时休息！\n", player.health);
+    } else if (player.health < 60) {
+        print_colored(COLOR_YELLOW, "? 提示：你的健康状况不佳（血量%d/100），建议注意安全。\n", player.health);
+    }
+    if (player.spirit < 20) {
+        print_colored(COLOR_RED, "? 警告：你的精神处于崩溃边缘！精神%d/100\n", player.spirit);
+    } else if (player.spirit > 78) {
+        print_colored(COLOR_YELLOW, "? 警告：你过于兴奋！小心身体！（精神%d/100）\n", player.spirit);
+    }
+    if (player.energy == 0) {
+        print_colored(COLOR_RED, "? 警告：能量耗尽！请等待恢复或购买能量药水。\n");
+    }
+}
  
  //================ 主函数 ================
  int main() {
@@ -4140,50 +4382,126 @@ void show_prestige_menu() {
                  press_any_key();
                  break;
              }
-             case 3: {
-                 CLEAR_SCREEN();
-                 draw_box("?? 商城");
-                 
-                 printf("可用物品：\n\n");
-                 for (int i = 0; i < MAX_MARKET; i++) {
-                     MarketItem* item = &market[i];
-                     
-                     printf("%d. %s\n", i + 1, item->name);
-                     
-                     switch (item->rarity) {
-                         case RARITY_LEGENDARY:
-                             print_colored(COLOR_YELLOW, "   传说 ");
-                             break;
-                         case RARITY_EPIC:
-                             print_colored(COLOR_MAGENTA, "   史诗 ");
-                             break;
-                         case RARITY_RARE:
-                             print_colored(COLOR_BLUE, "   稀有 ");
-                             break;
-                         case RARITY_UNCOMMON:
-                             print_colored(COLOR_GREEN, "   优秀 ");
-                             break;
-                         default:
-                             printf("   普通 ");
-                             break;
-                     }
-                     
-                     printf("价格：%d 坤币\n", item->price);
-                     printf("   等级要求：%d\n", item->required_level);
-                     printf("   被动收入：%.1f 坤币/小时\n", item->passive_income);
-                     printf("   描述：%s\n", item->description);
-                     printf("\n");
-                 }
-                 
-                 draw_separator();
-                 printf("选择商品（0返回）: ");
-                 int item_choice = get_valid_input(0, MAX_MARKET);
-                 if (item_choice > 0) {
-                     buy_item(item_choice - 1);
-                 }
-                 press_any_key();
-                 break;
-             }
+            case 3: {
+                // 商城主菜单 - 分为家具商店和食物商店
+                while (true) {
+                    CLEAR_SCREEN();
+                    draw_box("?? 商城");
+                    
+                    printf("请选择商店类型：\n");
+                    printf("1. 家具商店（购买家具，获得被动收入）\n");
+                    printf("2. 食物商店（购买食物，恢复饱食度）\n");
+                    printf("3. 返回主菜单\n");
+                    draw_separator();
+                    
+                    int shop_type = get_valid_input(1, 3);
+                    if (shop_type == 3) break;
+                    
+                    if (shop_type == 1) {
+                        // 家具商店
+                        while (true) {
+                            CLEAR_SCREEN();
+                            draw_box("?? 家具商店");
+                            
+                            printf("可用家具：\n\n");
+                            for (int i = 0; i < MAX_MARKET; i++) {
+                                MarketItem* item = &market[i];
+                                
+                                printf("%d. %s\n", i + 1, item->name);
+                                
+                                switch (item->rarity) {
+                                    case RARITY_LEGENDARY:
+                                        print_colored(COLOR_YELLOW, "   传说 ");
+                                        break;
+                                    case RARITY_EPIC:
+                                        print_colored(COLOR_MAGENTA, "   史诗 ");
+                                        break;
+                                    case RARITY_RARE:
+                                        print_colored(COLOR_BLUE, "   稀有 ");
+                                        break;
+                                    case RARITY_UNCOMMON:
+                                        print_colored(COLOR_GREEN, "   优秀 ");
+                                        break;
+                                    default:
+                                        printf("   普通 ");
+                                        break;
+                                }
+                                
+                                printf("价格：%d 坤币\n", item->price);
+                                printf("   等级要求：%d\n", item->required_level);
+                                printf("   被动收入：%.1f 坤币/小时\n", item->passive_income);
+                                printf("   描述：%s\n", item->description);
+                                printf("\n");
+                            }
+                            
+                            draw_separator();
+                            printf("选择商品（0返回）: ");
+                            int item_choice = get_valid_input(0, MAX_MARKET);
+                            if (item_choice == 0) break;
+                            buy_item(item_choice - 1);
+                            press_any_key();
+                        }
+                    } else if (shop_type == 2) {
+                        // 食物商店 - 从手机菜单迁移过来
+                        while (true) {
+                            CLEAR_SCREEN();
+                            draw_box("?? 食物商店");
+                            
+                            printf("可购买的食物：\n");
+                            printf("1. 面包 - 10坤币（恢复20饱食度）\n");
+                            printf("2. 方便面 - 15坤币（恢复30饱食度）\n");
+                            printf("3. 盒饭 - 25坤币（恢复50饱食度）\n");
+                            printf("4. 豪华套餐 - 50坤币（恢复100饱食度）\n");
+                            printf("0. 返回\n");
+                            draw_separator();
+                            
+                            int choice = get_valid_input(0, 4);
+                            
+                            int cost = 0, food_value = 0;
+                            const char* food_name = "";
+                            
+                            switch (choice) {
+                                case 1:
+                                    cost = 10;
+                                    food_value = 20;
+                                    food_name = "面包";
+                                    break;
+                                case 2:
+                                    cost = 15;
+                                    food_value = 30;
+                                    food_name = "方便面";
+                                    break;
+                                case 3:
+                                    cost = 25;
+                                    food_value = 50;
+                                    food_name = "盒饭";
+                                    break;
+                                case 4:
+                                    cost = 50;
+                                    food_value = 100;
+                                    food_name = "豪华套餐";
+                                    break;
+                                case 0:
+                                    break;
+                                default:
+                                    continue;
+                            }
+                            
+                            if (choice > 0) {
+                                if (remove_coins(cost)) {
+                                    player.hunger += food_value;
+                                    if (player.hunger > 100) player.hunger = 100;
+                                    print_colored(COLOR_GREEN, "? 购买了%s，饱食度+%d\n", food_name, food_value);
+                                } else {
+                                    print_colored(COLOR_RED, "? 坤币不足！\n");
+                                }
+                                press_any_key();
+                            }
+                        }
+                    }
+                }
+                break;
+            }
              case 4:
                  show_skills();
                  break;
