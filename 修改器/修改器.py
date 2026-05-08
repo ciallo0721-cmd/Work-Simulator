@@ -22,12 +22,12 @@ QUEST_SIZE = 304
 PET_SIZE = 72
 COMPANY_LEVEL_SIZE = 160
 INVENTORY_ITEM_SIZE = 176
-STOCK_SIZE = 56
+STOCK_SIZE = 80       # 修正：name[50]+4int+time_t(align8)，MSVC x64实际80字节
 PROPERTY_SIZE = 160
 FRIEND_SIZE = 56
-CHAT_MESSAGE_SIZE = 240
-CHATTER_SIZE = 144
-PLAYER_SIZE = 38360  # 更新：新增了hunger, health, spirit等字段
+CHAT_MESSAGE_SIZE = 248  # 修正：sender[30]+content[200]+enum(align4)+time_t(align8)
+CHATTER_SIZE = 140       # 修正：name[30]+enum(align4)+bool+char[100]，align4
+PLAYER_SIZE = 51336      # 修正：基于MSVC x64 offsetof精确计算
 SAVE_VERSION = 4
 SAVE_HEADER_SIZE = 4
 
@@ -60,43 +60,43 @@ OFFSETS = {
     'inventory': 17484,
     'inventory_count': 35084,
     'stocks': 35088,
-    'invested_stocks': 35368,
-    'properties': 35392,
-    'property_count': 36992,
-    'friends': 37000,
-    'friend_count': 37560,
-    'daily_task_completions': 37564,
-    'weekly_task_completions': 37568,
-    'lifetime_task_completions': 37572,
-    'total_income': 37576,
-    'total_expenses': 37584,
-    'current_season': 37592,
-    'day_count': 37596,
-    'prestige_level': 37600,
-    'prestige_points': 37604,
-    'has_premium': 37608,
-    'premium_until': 37616,
-    'achievement_points': 37624,
-    'lottery_tickets': 37628,
-    'mystery_keys': 37632,
-    'boss_defeats': 37636,
-    'festival_participations': 37640,
-    'craft_count': 37644,
+    'invested_stocks': 35488,
+    'properties': 35512,
+    'property_count': 37112,
+    'friends': 37120,
+    'friend_count': 37680,
+    'daily_task_completions': 37684,
+    'weekly_task_completions': 37688,
+    'lifetime_task_completions': 37692,
+    'total_income': 37696,
+    'total_expenses': 37704,
+    'current_season': 37712,
+    'day_count': 37716,
+    'prestige_level': 37720,
+    'prestige_points': 37724,
+    'has_premium': 37728,
+    'premium_until': 37736,
+    'achievement_points': 37744,
+    'lottery_tickets': 37748,
+    'mystery_keys': 37752,
+    'boss_defeats': 37756,
+    'festival_participations': 37760,
+    'craft_count': 37764,
     
     # 新增字段 (v4)
-    'hunger': 37648,           # 饱食度
-    'health': 37652,          # 血量
-    'spirit': 37656,          # 精神
-    'is_hallucinating': 37660,# 幻觉状态
-    'hallucination_end': 37664,# 幻觉结束时间
-    'sudden_death_chance': 37672, # 猝死几率
-    'hallu_count': 37676,     # 幻觉触发次数
-    'has_phone': 37680,       # 是否有手机
-    'in_chat_room': 37684,    # 是否在聊天室
-    'chat_history': 37688,    # 聊天历史 (50*240=12000)
-    'chat_message_count': 49688, # 消息数量
-    'chatters': 49692,        # 聊天室人物 (8*144=1152)
-    'chatter_count': 50844,   # 人物数量
+    'hunger': 37768,           # 饱食度
+    'health': 37772,          # 血量
+    'spirit': 37776,          # 精神
+    'is_hallucinating': 37780,# 幻觉状态
+    'hallucination_end': 37784,# 幻觉结束时间
+    'sudden_death_chance': 37792, # 猝死几率
+    'hallu_count': 37796,     # 幻觉触发次数
+    'has_phone': 37800,       # 是否有手机
+    'in_chat_room': 37801,    # 是否在聊天室
+    'chat_history': 37808,    # 聊天历史 (50*248=12400)
+    'chat_message_count': 50208, # 消息数量
+    'chatters': 50212,        # 聊天室人物 (8*140=1120)
+    'chatter_count': 51332,   # 人物数量
 }
 
 # ==================== 字段类型定义 ====================
