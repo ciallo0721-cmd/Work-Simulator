@@ -145,6 +145,18 @@
      bool is_online;
      char personality[100];
  } Chatter;
+
+ // 福布斯排行榜条目
+ typedef struct {
+     char player_name[50];
+     money_t kun_coins;
+     int level;
+     time_t record_time;
+     bool is_active;
+ } ForbesRankingEntry;
+
+ #define MAX_FORBES_ENTRIES 100
+ #define FORBES_FILE "forbes_ranking.dat"
  
  //================ 结构体定义 ================
  typedef struct {
@@ -272,6 +284,9 @@
  
  // 玩家主结构体
  typedef struct {
+     // 玩家名称（新增）
+     char player_name[50];
+
      // 核心资源
      money_t kun_coins;
      int kun_exp;
@@ -440,6 +455,13 @@
  void ai_chatter_response(int chatter_index, const char* player_message);
  void process_od_offer(int chatter_index);
  void process_tongcheng_offer(int chatter_index);
+
+ // 福布斯排行榜系统
+ void update_forbes_ranking();
+ void load_forbes_ranking();
+ void save_forbes_ranking();
+ void show_forbes_ranking();
+ void show_forbes_ranking_menu();
  
  // 事件系统
  void random_event();
@@ -671,7 +693,7 @@
  //================ 初始化函数 ================
  void init_game() {
      srand((unsigned int)(time(NULL) ^ (unsigned long)&init_game));
-     
+
      init_player();
      init_tasks();
      init_market();
@@ -684,17 +706,56 @@
      init_properties();
      init_friends();
      init_chat_room();
-     
+
+     // 加载福布斯排行榜
+     load_forbes_ranking();
+
      // 尝试加载存档
      load_game();
-     
-     // 更新游戏状态
+
+     // 检查是否是第一次进入游戏（无存档或名为默认名）
+     FILE* check_file = fopen(SAVE_FILE, "rb");
+     if (check_file) {
+         fclose(check_file);
+     }
+
+     // 如果last_login为0，说明是新存档，需要输入名称
      time_t now = time(NULL);
      if (player.last_login == 0) {
+         CLEAR_SCREEN();
+         printf(COLOR_YELLOW COLOR_BOLD);
+         printf("\n  ╔═══════════════════════════════════════════════════════════╗\n");
+         printf("  ║                                                           ║\n");
+         printf("  ║              欢迎来到打工模拟器！                          ║\n");
+         printf("  ║              Welcome to Worker Simulator!                  ║\n");
+         printf("  ║                                                           ║\n");
+         printf("  ╚═══════════════════════════════════════════════════════════╝\n");
+         printf(COLOR_RESET);
+
+         printf("\n  请输入你的名字（最多49个字符）: ");
+         char input_name[50];
+         if (fgets(input_name, sizeof(input_name), stdin) != NULL) {
+             // 去除换行符
+             input_name[strcspn(input_name, "\n")] = 0;
+             if (strlen(input_name) > 0) {
+                 safe_strcpy(player.player_name, input_name, 50);
+             } else {
+                 safe_strcpy(player.player_name, "匿名玩家", 50);
+             }
+         } else {
+             safe_strcpy(player.player_name, "匿名玩家", 50);
+         }
+
+         print_colored(COLOR_GREEN, "\n  欢迎，%s！\n", player.player_name);
+         press_any_key();
+
          player.last_login = now;
          player.game_start_time = now;
          player.current_season = SEASON_SPRING;
          player.day_count = 1;
+
+         // 首次进入游戏，更新福布斯排行榜
+         update_forbes_ranking();
      } else {
          // 计算经过的天数并更新
          struct tm* last_tm = localtime(&player.last_login);
@@ -751,6 +812,7 @@
  
  void init_player() {
      memset(&player, 0, sizeof(Player));
+     safe_strcpy(player.player_name, "匿名玩家", 50);
      player.level = 1;
      player.kun_coins = 500;  // 初始500坤币
      player.kun_exp = 0;
@@ -1533,6 +1595,8 @@
          fwrite(&version, sizeof(int), 1, file);
          fwrite(&player, sizeof(Player), 1, file);
          fclose(file);
+         // 保存时同步更新福布斯排行榜
+         update_forbes_ranking();
          print_colored(COLOR_GREEN, "\n?? 游戏存档已保存！\n");
      } else {
          print_colored(COLOR_RED, "\n? 保存失败！\n");
@@ -1554,6 +1618,226 @@
      } else {
          print_colored(COLOR_YELLOW, "\n?? 未找到存档，开始新游戏...\n");
      }
+ }
+
+ //================ 福布斯排行榜系统 ================
+ ForbesRankingEntry forbes_list[MAX_FORBES_ENTRIES];
+ int forbes_count = 0;
+
+void init_default_forbes_ranking() {
+    // 预设福布斯名人榜
+    struct {
+        const char* name;
+        money_t coins;
+        int level;
+    } default_celebrities[] = {
+        {"马斯克", 999999999999LL, 99},
+        {"比尔盖茨", 888888888888LL, 99},
+        {"贝索斯", 777777777777LL, 99},
+        {"巴菲特", 666666666666LL, 99},
+        {"马云", 555555555555LL, 99},
+        {"扎克伯格", 444444444444LL, 99},
+        {"库克", 333333333333LL, 99},
+        {"马化腾", 222222222222LL, 99},
+        {"李嘉诚", 111111111111LL, 99},
+        {"钟睒睒", 100000000000LL, 99}
+    };
+    
+    int celeb_count = sizeof(default_celebrities) / sizeof(default_celebrities[0]);
+    forbes_count = celeb_count;
+    
+    for (int i = 0; i < celeb_count; i++) {
+        safe_strcpy(forbes_list[i].player_name, default_celebrities[i].name, 50);
+        forbes_list[i].kun_coins = default_celebrities[i].coins;
+        forbes_list[i].level = default_celebrities[i].level;
+        forbes_list[i].record_time = time(NULL);
+        forbes_list[i].is_active = false; // 名人标记为非活跃
+    }
+}
+
+void load_forbes_ranking() {
+    // 先读取玩家数据（临时保存）
+    ForbesRankingEntry player_entries[MAX_FORBES_ENTRIES];
+    int player_count = 0;
+    
+    FILE* file = fopen(FORBES_FILE, "rb");
+    if (file) {
+        fread(&player_count, sizeof(int), 1, file);
+        if (player_count > 0 && player_count <= MAX_FORBES_ENTRIES) {
+            fread(player_entries, sizeof(ForbesRankingEntry), player_count, file);
+        }
+        fclose(file);
+    }
+    
+    // 初始化预设名人（硬编码）
+    init_default_forbes_ranking();
+    
+    // 合并玩家数据到名人后面
+    for (int i = 0; i < player_count && forbes_count < MAX_FORBES_ENTRIES; i++) {
+        forbes_list[forbes_count++] = player_entries[i];
+    }
+}
+
+ void save_forbes_ranking() {
+     FILE* file = fopen(FORBES_FILE, "wb");
+     if (file) {
+         fwrite(&forbes_count, sizeof(int), 1, file);
+         fwrite(forbes_list, sizeof(ForbesRankingEntry), forbes_count, file);
+         fclose(file);
+     }
+ }
+
+ void update_forbes_ranking() {
+     // 查找是否已有该玩家的记录
+     int existing_index = -1;
+     for (int i = 0; i < forbes_count; i++) {
+         if (strcmp(forbes_list[i].player_name, player.player_name) == 0) {
+             existing_index = i;
+             break;
+         }
+     }
+
+     if (existing_index >= 0) {
+         // 更新现有记录
+         forbes_list[existing_index].kun_coins = player.kun_coins;
+         forbes_list[existing_index].level = player.level;
+         forbes_list[existing_index].record_time = time(NULL);
+     } else {
+         // 添加新记录
+         if (forbes_count < MAX_FORBES_ENTRIES) {
+             safe_strcpy(forbes_list[forbes_count].player_name, player.player_name, 50);
+             forbes_list[forbes_count].kun_coins = player.kun_coins;
+             forbes_list[forbes_count].level = player.level;
+             forbes_list[forbes_count].record_time = time(NULL);
+             forbes_list[forbes_count].is_active = true;
+             forbes_count++;
+         }
+     }
+
+     // 按坤币数量排序（冒泡排序）
+     for (int i = 0; i < forbes_count - 1; i++) {
+         for (int j = 0; j < forbes_count - i - 1; j++) {
+             if (forbes_list[j].kun_coins < forbes_list[j + 1].kun_coins) {
+                 ForbesRankingEntry temp = forbes_list[j];
+                 forbes_list[j] = forbes_list[j + 1];
+                 forbes_list[j + 1] = temp;
+             }
+         }
+     }
+
+     save_forbes_ranking();
+ }
+
+ void show_forbes_ranking() {
+     CLEAR_SCREEN();
+
+     printf(COLOR_YELLOW COLOR_BOLD);
+     printf("\n  ╔═══════════════════════════════════════════════════════════╗\n");
+     printf("  ║                                                           ║\n");
+     printf("  ║                    ?? 福布斯坤币排行榜 ??                   ║\n");
+     printf("  ║                                                           ║\n");
+     printf("  ╚═══════════════════════════════════════════════════════════╝\n");
+     printf(COLOR_RESET "\n");
+
+     if (forbes_count == 0) {
+         printf("  暂无排行榜数据！\n");
+     } else {
+         // 显示前10名
+         int display_count = (forbes_count < 10) ? forbes_count : 10;
+
+         printf(COLOR_BOLD "  排名   %-15s %15s  %5s\n" COLOR_RESET,
+                "玩家名称", "坤币", "等级");
+         printf("  ─────────────────────────────────────────────────────\n");
+
+         for (int i = 0; i < display_count; i++) {
+             ForbesRankingEntry* entry = &forbes_list[i];
+
+             // 根据排名设置颜色
+             const char* rank_color = COLOR_WHITE;
+             if (i == 0) rank_color = COLOR_YELLOW;  // 第一名金色
+             else if (i == 1) rank_color = COLOR_CYAN;  // 第二名银色
+             else if (i == 2) rank_color = COLOR_MAGENTA;  // 第三名铜色
+
+             printf("  %s%3d.%s ", rank_color, i + 1, COLOR_RESET);
+
+             // 高亮当前玩家
+             if (strcmp(entry->player_name, player.player_name) == 0) {
+                 printf(COLOR_GREEN "%-15s" COLOR_RESET, entry->player_name);
+             } else {
+                 printf("%-15s", entry->player_name);
+             }
+
+             printf(" %15lld  %5d\n", entry->kun_coins, entry->level);
+         }
+
+         if (forbes_count > 10) {
+             printf("\n  ... 还有 %d 名玩家未显示\n", forbes_count - 10);
+         }
+
+         // 显示玩家当前排名
+         printf("\n  ");
+         for (int i = 0; i < forbes_count; i++) {
+             if (strcmp(forbes_list[i].player_name, player.player_name) == 0) {
+                 print_colored(COLOR_CYAN, "  你目前的排名：第 %d 名\n", i + 1);
+                 break;
+             }
+         }
+     }
+
+     printf("\n");
+     press_any_key();
+ }
+
+ void show_forbes_ranking_menu() {
+     int choice;
+
+     do {
+         CLEAR_SCREEN();
+         printf(COLOR_BOLD);
+         printf("\n  ╔═══════════════════════════════════════════════════════════╗\n");
+         printf("  ║                    ?? 福布斯排行榜 ??                      ║\n");
+         printf("  ╚═══════════════════════════════════════════════════════════╝\n");
+         printf(COLOR_RESET);
+
+         printf("\n  1. ?? 查看排行榜\n");
+         printf("  2. ?? 更新我的排名\n");
+         printf("  3. ?? 我的排名信息\n");
+         printf("\n  0. ?? 返回\n");
+
+         printf("\n  请选择: ");
+         choice = get_valid_input(0, 3);
+
+         switch (choice) {
+             case 1:
+                 show_forbes_ranking();
+                 break;
+             case 2:
+                 update_forbes_ranking();
+                 print_colored(COLOR_GREEN, "\n  排名已更新！\n");
+                 press_any_key();
+                 break;
+             case 3: {
+                 CLEAR_SCREEN();
+                 printf(COLOR_BOLD "\n  我的排名信息\n" COLOR_RESET);
+                 printf(COLOR_CYAN);
+                 printf("  ═══════════════════════════════════════\n");
+                 printf("  玩家名称: %s\n", player.player_name);
+                 printf("  当前坤币: %lld\n", player.kun_coins);
+                 printf("  当前等级: %d\n", player.level);
+                 printf(COLOR_RESET);
+
+                 for (int i = 0; i < forbes_count; i++) {
+                     if (strcmp(forbes_list[i].player_name, player.player_name) == 0) {
+                         print_colored(COLOR_GREEN, "  福布斯排名: 第 %d 名 (共 %d 名玩家)\n", i + 1, forbes_count);
+                         break;
+                     }
+                 }
+                 printf("\n");
+                 press_any_key();
+                 break;
+             }
+         }
+     } while (choice != 0);
  }
  
  //================ 事件系统 ================
@@ -3611,11 +3895,12 @@ void buy_premium(int duration_days) {
  }
  
 void show_status() {
-    CLEAR_SCREEN();
-    draw_box("?? 玩家状态");
-    
-    printf(COLOR_BOLD "?? 基本信息\n" COLOR_RESET);
-    printf("   等级：%d\n", player.level);
+     CLEAR_SCREEN();
+     draw_box("?? 玩家状态");
+
+     printf(COLOR_BOLD "?? 基本信息\n" COLOR_RESET);
+     printf(COLOR_BOLD "   玩家名称：" COLOR_RESET COLOR_GREEN "%s\n" COLOR_RESET, player.player_name);
+     printf("   等级：%d\n", player.level);
     
     // 经验进度条
     int exp_max = player.level * 100;
@@ -4273,7 +4558,7 @@ void show_main_menu() {
     printf("│10. ?? 房产投资      │11. ?? 成就系统      │12. ? 声望系统      │\n");
     printf("│13. ?? 好友系统      │14. ?? 游戏统计      │15. ?? 会员商城      │\n");
     printf("│16. ?? 游戏设置      │17. ?? 帮助指南      │18. ?? 保存游戏      │\n");
-    printf("│19. ?? 手机          │                     │                     │\n");
+    printf("│19. ?? 手机          │20. ?? 福布斯排行    │                     │\n");
     printf("│                     │ 0. ?? 退出游戏      │                     │\n");
     printf("└─────────────────────┴─────────────────────┴─────────────────────┘\n");
     draw_separator();
@@ -4315,8 +4600,8 @@ void show_main_menu() {
      while (1) {
          show_main_menu();
          
-         printf("请输入选项: ");
-         int choice = get_valid_input(0, 19);
+printf("请输入选项: ");
+        int choice = get_valid_input(0, 20);
          
          time_t now = time(NULL);
          if (now - last_passive_time >= 3600) {
@@ -4552,6 +4837,9 @@ void show_main_menu() {
                  break;
              case 19:
                  show_phone_menu();
+                 break;
+             case 20:
+                 show_forbes_ranking_menu();
                  break;
              case 0:
                  CLEAR_SCREEN();

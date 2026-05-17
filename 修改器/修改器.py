@@ -27,76 +27,81 @@ PROPERTY_SIZE = 160
 FRIEND_SIZE = 56
 CHAT_MESSAGE_SIZE = 248  # 修正：sender[30]+content[200]+enum(align4)+time_t(align8)
 CHATTER_SIZE = 140       # 修正：name[30]+enum(align4)+bool+char[100]，align4
-PLAYER_SIZE = 51336      # 修正：基于MSVC x64 offsetof精确计算
+PLAYER_SIZE = 51344      # 修正：包含player_name[50]字段
+FORBES_ENTRY_SIZE = 72   # name[50]+8(kun_coins)+4(level)+8(time_t)+1(bool)+1(padding)
+FORBES_FILE = "forbes_ranking.dat"
 SAVE_VERSION = 4
 SAVE_HEADER_SIZE = 4
 
 # ==================== 字段偏移量 (相对于Player结构体起始位置) ====================
 OFFSETS = {
-    # 原有字段
-    'kun_coins': 0,
-    'kun_exp': 8,
-    'level': 12,
-    'energy': 16,
-    'max_energy': 20,
-    'last_login': 24,
-    'furniture': 32,
-    'furniture_count': 2532,
-    'is_billionaire': 2536,
-    'active_event': 2540,
-    'event_end_time': 2544,
-    'tasks_unlocked': 2552,
-    'achievements': 2568,
-    'consecutive_days': 10968,
-    'game_start_time': 10976,
-    'total_play_time': 10984,
-    'skill_points': 10988,
-    'skills': 10992,
-    'active_quests': 12472,
-    'pets': 15512,
-    'pet_count': 15872,
-    'company_levels': 15880,
-    'current_company_level': 17480,
-    'inventory': 17484,
-    'inventory_count': 35084,
-    'stocks': 35088,
-    'invested_stocks': 35488,
-    'properties': 35512,
-    'property_count': 37112,
-    'friends': 37120,
-    'friend_count': 37680,
-    'daily_task_completions': 37684,
-    'weekly_task_completions': 37688,
-    'lifetime_task_completions': 37692,
-    'total_income': 37696,
-    'total_expenses': 37704,
-    'current_season': 37712,
-    'day_count': 37716,
-    'prestige_level': 37720,
-    'prestige_points': 37724,
-    'has_premium': 37728,
-    'premium_until': 37736,
-    'achievement_points': 37744,
-    'lottery_tickets': 37748,
-    'mystery_keys': 37752,
-    'boss_defeats': 37756,
-    'festival_participations': 37760,
-    'craft_count': 37764,
-    
+    # 玩家名称（新增）
+    'player_name': 0,
+
+    # 原有字段（偏移+50）
+    'kun_coins': 50,
+    'kun_exp': 58,
+    'level': 62,
+    'energy': 66,
+    'max_energy': 70,
+    'last_login': 74,
+    'furniture': 82,
+    'furniture_count': 2582,
+    'is_billionaire': 2586,
+    'active_event': 2590,
+    'event_end_time': 2594,
+    'tasks_unlocked': 2602,
+    'achievements': 2618,
+    'consecutive_days': 11018,
+    'game_start_time': 11026,
+    'total_play_time': 11034,
+    'skill_points': 11038,
+    'skills': 11042,
+    'active_quests': 12522,
+    'pets': 15562,
+    'pet_count': 15922,
+    'company_levels': 15930,
+    'current_company_level': 17530,
+    'inventory': 17534,
+    'inventory_count': 35134,
+    'stocks': 35138,
+    'invested_stocks': 35538,
+    'properties': 35562,
+    'property_count': 37162,
+    'friends': 37170,
+    'friend_count': 37730,
+    'daily_task_completions': 37734,
+    'weekly_task_completions': 37738,
+    'lifetime_task_completions': 37742,
+    'total_income': 37746,
+    'total_expenses': 37754,
+    'current_season': 37762,
+    'day_count': 37766,
+    'prestige_level': 37770,
+    'prestige_points': 37774,
+    'has_premium': 37778,
+    'premium_until': 37786,
+    'achievement_points': 37794,
+    'lottery_tickets': 37798,
+    'mystery_keys': 37802,
+    'boss_defeats': 37806,
+    'festival_participations': 37810,
+    'craft_count': 37814,
+
     # 新增字段 (v4)
-    'hunger': 37768,           # 饱食度
-    'health': 37772,          # 血量
-    'spirit': 37776,          # 精神
-    'is_hallucinating': 37780,# 幻觉状态
-    'hallucination_end': 37784,# 幻觉结束时间
-    'sudden_death_chance': 37792, # 猝死几率
-    'hallu_count': 37796,     # 幻觉触发次数
-    'has_phone': 37800,       # 是否有手机
-    'in_chat_room': 37801,    # 是否在聊天室
-    'chat_history': 37808,    # 聊天历史 (50*248=12400)
-    'chat_message_count': 50208, # 消息数量
-    'chatters': 50212,        # 聊天室人物 (8*140=1120)
-    'chatter_count': 51332,   # 人物数量
+    'hunger': 37818,           # 饱食度
+    'health': 37822,          # 血量
+    'spirit': 37826,          # 精神
+    'is_hallucinating': 37830,# 幻觉状态
+    'hallucination_end': 37834,# 幻觉结束时间
+    'sudden_death_chance': 37842, # 猝死几率
+    'hallu_count': 37846,     # 幻觉触发次数
+    'has_phone': 37850,       # 是否有手机
+    'in_chat_room': 37851,    # 是否在聊天室
+    'chat_history': 37858,    # 聊天历史 (50*248=12400)
+    'chat_message_count': 50258, # 消息数量
+    'chatters': 50262,        # 聊天室人物 (8*140=1120)
+    'chatter_count': 51382,   # 人物数量
 }
 
 # ==================== 字段类型定义 ====================
@@ -157,6 +162,7 @@ FIELD_TYPES = {
 
 # ==================== 可读写的基本字段列表 ====================
 BASIC_FIELDS = [
+    ('player_name', '玩家名称'),
     ('kun_coins', '坤币'),
     ('kun_exp', '经验'),
     ('level', '等级'),
@@ -178,7 +184,7 @@ BASIC_FIELDS = [
     ('craft_count', '合成次数'),
     ('has_premium', '高级会员'),
     ('is_billionaire', '亿万富翁'),
-    
+
     # 新增状态字段
     ('hunger', '饱食度'),
     ('health', '血量'),
@@ -379,6 +385,160 @@ class KunSaveEditor:
         count = self.read_value('furniture_count')
         return count if count is not None else 0
 
+    def read_player_name(self) -> Optional[str]:
+        """读取玩家名称"""
+        if self.data is None:
+            print("错误: 请先加载存档")
+            return None
+
+        try:
+            offset = self._player_offset('player_name')
+            if offset + 50 > len(self.data):
+                return "未知玩家"
+            name_bytes = self.data[offset:offset + 50]
+            end = name_bytes.find(b'\0')
+            if end != -1:
+                name_bytes = name_bytes[:end]
+            return name_bytes.decode('utf-8', errors='ignore')
+        except Exception as e:
+            print(f"读取玩家名称失败: {e}")
+            return None
+
+    def write_player_name(self, name: str) -> bool:
+        """写入玩家名称"""
+        if self.data is None:
+            print("错误: 请先加载存档")
+            return False
+
+        try:
+            offset = self._player_offset('player_name')
+            name_bytes = name.encode('utf-8')[:49]
+            if offset + 50 > len(self.data):
+                needed = offset + 50 - len(self.data)
+                self.data.extend(b'\x00' * needed)
+            self.data[offset:offset + len(name_bytes)] = name_bytes
+            self.data[offset + len(name_bytes):offset + 50] = b'\0' * (50 - len(name_bytes))
+            print(f"成功设置玩家名称 = {name}")
+            return True
+        except Exception as e:
+            print(f"写入玩家名称失败: {e}")
+            return False
+
+    def show_forbes_ranking(self):
+        """显示福布斯排行榜"""
+        # 预设名人名单
+        famous_names = {
+            "马斯克", "比尔盖茨", "贝索斯", "巴菲特",
+            "马云", "扎克伯格", "库克", "马化腾",
+            "李嘉诚", "钟睒睒"
+        }
+
+        if not os.path.exists(FORBES_FILE):
+            print("\n  福布斯排行榜文件不存在！")
+            return
+
+        try:
+            with open(FORBES_FILE, 'rb') as f:
+                count = struct.unpack('<i', f.read(4))[0]
+                entries = []
+                for _ in range(min(count, 100)):
+                    entry_data = f.read(FORBES_ENTRY_SIZE)
+                    if len(entry_data) < FORBES_ENTRY_SIZE:
+                        break
+                    name = entry_data[:50].decode('utf-8', errors='ignore').rstrip('\0')
+                    coins = struct.unpack('<q', entry_data[50:58])[0]
+                    level = struct.unpack('<i', entry_data[58:62])[0]
+                    entries.append((name, coins, level))
+
+            print("\n" + "=" * 60)
+            print("  福布斯坤币排行榜")
+            print("=" * 60)
+
+            player_name = self.read_player_name()
+
+            for i, (name, coins, level) in enumerate(entries[:10], 1):
+                marker = ""
+                tag = ""
+                if name == player_name:
+                    marker = " <-- 你"
+                elif name in famous_names:
+                    tag = " [名人]"
+                rank_color = ""
+                if i == 1:
+                    rank_color = "\033[33m"
+                elif i == 2:
+                    rank_color = "\033[36m"
+                elif i == 3:
+                    rank_color = "\033[35m"
+                print(f"  {rank_color}{i:2}.{'\033[0m'} {name:15}{tag} {coins:>15} 坤币  Lv.{level}{marker}")
+
+            print("=" * 60)
+        except Exception as e:
+            print(f"读取排行榜失败: {e}")
+
+    def update_forbes_ranking(self):
+        """更新福布斯排行榜"""
+        if self.data is None:
+            print("错误: 请先加载存档")
+            return
+
+        player_name = self.read_player_name()
+        kun_coins = self.read_value('kun_coins')
+        level = self.read_value('level')
+
+        if player_name is None or kun_coins is None or level is None:
+            print("错误: 无法获取玩家数据")
+            return
+
+        # 读取现有排行榜
+        entries = []
+        if os.path.exists(FORBES_FILE):
+            try:
+                with open(FORBES_FILE, 'rb') as f:
+                    count = struct.unpack('<i', f.read(4))[0]
+                    for _ in range(min(count, 100)):
+                        entry_data = f.read(FORBES_ENTRY_SIZE)
+                        if len(entry_data) < FORBES_ENTRY_SIZE:
+                            break
+                        entries.append(entry_data)
+            except:
+                pass
+
+        # 查找并更新或添加玩家记录
+        new_entry = player_name.encode('utf-8')[:50].ljust(50, b'\0')
+        new_entry += struct.pack('<q', kun_coins)
+        new_entry += struct.pack('<i', level)
+        new_entry += struct.pack('<q', int(time.time()))
+        new_entry += struct.pack('<?', True)
+        new_entry += b'\x00'  # padding
+
+        found = False
+        for i, entry in enumerate(entries):
+            name = entry[:50].decode('utf-8', errors='ignore').rstrip('\0')
+            if name == player_name:
+                entries[i] = new_entry
+                found = True
+                break
+
+        if not found:
+            entries.append(new_entry)
+
+        # 按坤币排序
+        def get_coins(entry):
+            return struct.unpack('<q', entry[50:58])[0]
+        entries.sort(key=get_coins, reverse=True)
+        entries = entries[:100]  # 最多保留100条
+
+        # 写入文件
+        with open(FORBES_FILE, 'wb') as f:
+            f.write(struct.pack('<i', len(entries)))
+            for entry in entries:
+                f.write(entry)
+
+        print(f"\n  福布斯排行榜已更新！")
+        print(f"  玩家: {player_name}")
+        print(f"  坤币: {kun_coins}")
+
     def show_status(self):
         """显示当前状态"""
         if self.data is None:
@@ -388,6 +548,11 @@ class KunSaveEditor:
         print("=" * 60)
         print("  当前存档状态")
         print("=" * 60)
+
+        # 显示玩家名称
+        player_name = self.read_player_name()
+        if player_name:
+            print(f"  {'玩家名称':12}: {player_name}")
 
         display_fields = [
             ('等级', 'level'),
@@ -512,18 +677,20 @@ class KunSaveEditor:
         """交互式修改模式"""
         while True:
             print("\n" + "=" * 60)
-            print("  存档修改器 v2.1 - 交互模式")
+            print("  存档修改器 v2.2 - 交互模式")
             print("=" * 60)
             print("  1. 显示当前状态")
             print("  2. 修改基本属性")
             print("  3. 修改家具")
             print("  4. 应用预设作弊")
             print("  5. 修改状态属性 (饱食度/血量/精神)")
-            print("  6. 保存并退出")
-            print("  7. 退出不保存")
+            print("  6. 修改玩家名称")
+            print("  7. 福布斯排行榜")
+            print("  8. 保存并退出")
+            print("  9. 退出不保存")
             print("=" * 60)
 
-            choice = input("  请选择 (1-7): ").strip()
+            choice = input("  请选择 (1-9): ").strip()
 
             if choice == '1':
                 self.show_status()
@@ -532,6 +699,14 @@ class KunSaveEditor:
                 print("\n  可修改的基本属性:")
                 for i, (field, name) in enumerate(BASIC_FIELDS, 1):
                     value = self.read_value(field)
+                    if field == 'player_name':
+                        value = self.read_player_name()
+                    elif field in ('has_premium', 'is_billionaire', 'is_hallucinating'):
+                        display = "是" if value else "否"
+                    else:
+                        display = str(value) if value is not None else "N/A"
+                    if field != 'player_name':
+                        print(f"  {i:2}. {name:12} : {display}")
                     if field in ('has_premium', 'is_billionaire', 'is_hallucinating'):
                         display = "是" if value else "否"
                     else:
@@ -618,25 +793,44 @@ class KunSaveEditor:
                 print(f"  当前饱食度: {hunger}/100")
                 print(f"  当前血量: {health}/100")
                 print(f"  当前精神: {spirit}/100")
-                
+
                 new_hunger = input("  输入新饱食度 (0-100，回车跳过): ").strip()
                 if new_hunger and new_hunger.isdigit():
                     self.write_value('hunger', int(new_hunger))
-                
+
                 new_health = input("  输入新血量 (0-100，回车跳过): ").strip()
                 if new_health and new_health.isdigit():
                     self.write_value('health', int(new_health))
-                
+
                 new_spirit = input("  输入新精神 (0-100，回车跳过): ").strip()
                 if new_spirit and new_spirit.isdigit():
                     self.write_value('spirit', int(new_spirit))
 
             elif choice == '6':
+                # 修改玩家名称
+                current_name = self.read_player_name()
+                print(f"\n  当前玩家名称: {current_name}")
+                new_name = input("  输入新名称 (回车跳过): ").strip()
+                if new_name:
+                    self.write_player_name(new_name)
+
+            elif choice == '7':
+                # 福布斯排行榜
+                print("\n  福布斯排行榜管理:")
+                print("  1. 查看排行榜")
+                print("  2. 更新我的排名")
+                sub_choice = input("  请选择 (1-2): ").strip()
+                if sub_choice == '1':
+                    self.show_forbes_ranking()
+                elif sub_choice == '2':
+                    self.update_forbes_ranking()
+
+            elif choice == '8':
                 if self.save_save():
                     print("  修改已保存!")
                 break
 
-            elif choice == '7':
+            elif choice == '9':
                 print("  修改已丢弃")
                 break
 
@@ -660,9 +854,9 @@ def find_save_file() -> str:
 
 def main():
     print("=" * 60)
-    print("  打工模拟器存档修改器 v2.1")
+    print("  打工模拟器存档修改器 v2.2")
     print(f"  目标存档大小: {SAVE_HEADER_SIZE + PLAYER_SIZE} 字节 (v{SAVE_VERSION})")
-    print("  支持新特性: 饱食度/血量/精神系统")
+    print("  支持新特性: 玩家名称/福布斯排行榜/饱食度/血量/精神系统")
     print("=" * 60)
 
     save_file = find_save_file()

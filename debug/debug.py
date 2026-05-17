@@ -24,35 +24,43 @@ PROCESS_QUERY_INFORMATION = 0x0400
 # ==================== 结构体偏移量定义 ====================
 # 基于 Player 结构体精确偏移量
 OFFSETS = {
-    # 基础属性
-    'kun_coins': 0,          # 坤币 (8字节) - 只读，不修改
-    'kun_exp': 8,            # 经验 (4字节)
-    'level': 12,             # 等级 (4字节) - 只读
-    'energy': 16,            # 能量 (4字节)
-    'max_energy': 20,        # 最大能量 (4字节)
-    
+    # 玩家名称（新增）
+    'player_name': 0,         # 玩家名称 (50字节)
+
+    # 基础属性（偏移+50）
+    'kun_coins': 50,          # 坤币 (8字节) - 只读，不修改
+    'kun_exp': 58,            # 经验 (4字节)
+    'level': 62,             # 等级 (4字节) - 只读
+    'energy': 66,            # 能量 (4字节)
+    'max_energy': 70,        # 最大能量 (4字节)
+
     # 状态系统 (用于调试)
-    'hunger': 37648,         # 饱食度 (4字节)
-    'health': 37652,         # 血量 (4字节)
-    'spirit': 37656,         # 精神 (4字节)
-    'is_hallucinating': 37660,  # 幻觉状态 (1字节)
-    'hallucination_end': 37664, # 幻觉结束时间 (8字节)
-    'sudden_death_chance': 37672, # 猝死几率 (4字节)
-    'hallu_count': 37676,    # 幻觉触发次数 (4字节)
-    'has_phone': 37680,      # 是否有手机 (4字节)
-    'in_chat_room': 37684,   # 是否在聊天室 (4字节)
-    
+    'hunger': 37818,         # 饱食度 (4字节)
+    'health': 37822,         # 血量 (4字节)
+    'spirit': 37826,         # 精神 (4字节)
+    'is_hallucinating': 37830,  # 幻觉状态 (1字节)
+    'hallucination_end': 37834, # 幻觉结束时间 (8字节)
+    'sudden_death_chance': 37842, # 猝死几率 (4字节)
+    'hallu_count': 37846,    # 幻觉触发次数 (4字节)
+    'has_phone': 37850,      # 是否有手机 (4字节)
+    'in_chat_room': 37851,   # 是否在聊天室 (4字节)
+
     # 其他调试用
-    'skill_points': 10988,   # 技能点 (4字节)
-    'prestige_level': 37600, # 声望等级 (4字节)
-    'craft_count': 37644,    # 合成次数 (4字节)
-    'lottery_tickets': 37628, # 彩票 (4字节)
-    'mystery_keys': 37632,   # 神秘钥匙 (4字节)
-    'boss_defeats': 37636,   # BOSS击杀 (4字节)
+    'skill_points': 11038,   # 技能点 (4字节)
+    'prestige_level': 37770, # 声望等级 (4字节)
+    'craft_count': 37814,    # 合成次数 (4字节)
+    'lottery_tickets': 37798, # 彩票 (4字节)
+    'mystery_keys': 37802,   # 神秘钥匙 (4字节)
+    'boss_defeats': 37806,   # BOSS击杀 (4字节)
 }
+
+# 福布斯排行榜文件
+FORBES_FILE = "forbes_ranking.dat"
+FORBES_ENTRY_SIZE = 72
 
 # 字段类型
 FIELD_TYPES = {
+    'player_name': 's',
     'kun_coins': 'q',
     'kun_exp': 'i',
     'level': 'i',
@@ -281,7 +289,75 @@ class GameMemoryDebugger:
             data = bytes([1 if value else 0])
         
         return self.write_memory(addr, data)
-    
+
+    def read_player_name(self) -> Optional[str]:
+        """读取玩家名称"""
+        if not self.player_addr:
+            print("[-] 未设置Player地址")
+            return None
+
+        offset = OFFSETS['player_name']
+        addr = self.player_addr + offset
+        data = self.read_memory(addr, 50)
+        if data:
+            end = data.find(b'\0')
+            if end != -1:
+                data = data[:end]
+            return data.decode('utf-8', errors='ignore')
+        return None
+
+    def show_forbes_ranking(self):
+        """显示福布斯排行榜"""
+        # 预设名人名单
+        famous_names = {
+            "马斯克", "比尔盖茨", "贝索斯", "巴菲特",
+            "马云", "扎克伯格", "库克", "马化腾",
+            "李嘉诚", "钟睒睒"
+        }
+
+        if not os.path.exists(FORBES_FILE):
+            print("\n[-] 福布斯排行榜文件不存在！")
+            return
+
+        try:
+            with open(FORBES_FILE, 'rb') as f:
+                count = struct.unpack('<i', f.read(4))[0]
+                entries = []
+                for _ in range(min(count, 100)):
+                    entry_data = f.read(FORBES_ENTRY_SIZE)
+                    if len(entry_data) < FORBES_ENTRY_SIZE:
+                        break
+                    name = entry_data[:50].decode('utf-8', errors='ignore').rstrip('\0')
+                    coins = struct.unpack('<q', entry_data[50:58])[0]
+                    level = struct.unpack('<i', entry_data[58:62])[0]
+                    entries.append((name, coins, level))
+
+            print("\n" + "=" * 50)
+            print("  福布斯坤币排行榜")
+            print("=" * 50)
+
+            player_name = self.read_player_name()
+
+            for i, (name, coins, level) in enumerate(entries[:10], 1):
+                marker = ""
+                tag = ""
+                if name == player_name:
+                    marker = " <-- 你"
+                elif name in famous_names:
+                    tag = " [名人]"
+                rank_color = ""
+                if i == 1:
+                    rank_color = "\033[33m"
+                elif i == 2:
+                    rank_color = "\033[36m"
+                elif i == 3:
+                    rank_color = "\033[35m"
+                print(f"  {rank_color}{i:2}.{'\033[0m'} {name:15}{tag} {coins:>15} 坤币  Lv.{level}{marker}")
+
+            print("=" * 50)
+        except Exception as e:
+            print(f"[-] 读取排行榜失败: {e}")
+
     def simulate_hunger_system(self):
         """模拟饱食度系统变化"""
         print("\n[模拟] 饱食度系统模拟器")
@@ -452,29 +528,34 @@ class GameMemoryDebugger:
         coins = self.read_field('kun_coins')
         if coins is not None:
             print(f"  {'坤币':12}: {coins} (只读)")
-        
+
+        # 读取玩家名称
+        player_name = self.read_player_name()
+        if player_name:
+            print(f"  {'玩家名称':12}: {player_name}")
+
         print("=" * 50)
-    
+
     def run_debug_console(self):
         """运行调试控制台"""
         print("\n" + "=" * 50)
-        print("  打工模拟器 - 内存调试器/状态模拟器 v1.0")
+        print("  打工模拟器 - 内存调试器/状态模拟器 v1.1")
         print("=" * 50)
         print("[说明] 本工具仅用于调试，不修改坤币等核心数值")
-        print("[说明] 支持模拟饱食度/血量/精神系统变化")
+        print("[说明] 支持模拟饱食度/血量/精神系统变化和福布斯排行榜")
         print("=" * 50)
-        
+
         if not self.attach_process():
             print("[!] 附加进程失败")
             return
-        
+
         # 强制要求输入Player地址
         print("\n[必要] 需要知道Player结构体的内存地址才能操作。")
         print("[提示] 用Cheat Engine找到坤币的地址（初始500），那就是Player地址。")
         if not self.find_player_address():
             print("[!] 未提供有效地址，调试器无法工作")
             return
-        
+
         while True:
             print("\n" + "=" * 50)
             print("  调试菜单")
@@ -488,11 +569,12 @@ class GameMemoryDebugger:
             print("  7. 冻结精神值 (调试用)")
             print("  8. 设置幻觉状态")
             print("  9. 清除所有异常状态")
+            print("  A. 查看福布斯排行榜")
             print("  0. 退出")
             print("=" * 50)
-            
-            choice = input("选择: ").strip()
-            
+
+            choice = input("选择: ").strip().upper()
+
             if choice == '1':
                 self.show_current_status()
             elif choice == '2':
@@ -520,6 +602,8 @@ class GameMemoryDebugger:
                 self.write_field('is_hallucinating', 0)
                 self.write_field('sudden_death_chance', 0)
                 print("[+] 已恢复所有状态到正常水平")
+            elif choice == 'A':
+                self.show_forbes_ranking()
             elif choice == '0':
                 if self.process_handle:
                     self.kernel32.CloseHandle(self.process_handle)
