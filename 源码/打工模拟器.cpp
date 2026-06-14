@@ -4772,6 +4772,8 @@ printf("请输入选项: ");
                                     continue;
                             }
                             
+                            if (choice == 0) break;
+                            
                             if (choice > 0) {
                                 if (remove_coins(cost)) {
                                     player.hunger += food_value;
