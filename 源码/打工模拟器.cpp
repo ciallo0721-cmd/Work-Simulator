@@ -14,10 +14,7 @@
  #include <stdarg.h>
  #include <math.h>
  
- #ifdef __EMSCRIPTEN__
- #include "emscripten_compat.h"
- #include <unistd.h>
- #elif defined(_WIN32)
+ #ifdef _WIN32
  #include <conio.h>
  #include <windows.h>
  #else
@@ -481,10 +478,8 @@
  void show_achievement_progress();
  
  //================ 工具函数实现 ================
-void enable_ansi() {
-#ifdef __EMSCRIPTEN__
-    // Browser terminal already supports ANSI
-#elif defined(_WIN32)
+ void enable_ansi() {
+ #ifdef _WIN32
      HANDLE hOut = GetStdHandle(STD_OUTPUT_HANDLE);
      DWORD dwMode = 0;
      GetConsoleMode(hOut, &dwMode);
@@ -582,15 +577,11 @@ void enable_ansi() {
      }
  }
  
-void press_any_key() {
-    printf("\n" COLOR_GREEN "按任意键继续..." COLOR_RESET);
-#ifdef __EMSCRIPTEN__
-    getchar();  // Emscripten: need Enter
-#else
-    _getch();
-#endif
-    printf("\n");
-}
+ void press_any_key() {
+     printf("\n" COLOR_GREEN "按任意键继续..." COLOR_RESET);
+     _getch();
+     printf("\n");
+ }
  
  void show_skills() {
      CLEAR_SCREEN();
@@ -627,12 +618,8 @@ void press_any_key() {
      int choice = get_valid_input(0, 10);
      if (choice > 0) {
          upgrade_skill(choice - 1);
-        printf("\n");
-#ifdef __EMSCRIPTEN__
-        getchar();
-#else
-        system("pause");
-#endif
+         printf("\n");
+         system("pause");
      }
  }
  
@@ -645,14 +632,12 @@ void press_any_key() {
      
      for (int i = 0; i < 50; i++) {
          printf(COLOR_GREEN "█" COLOR_RESET);
-        fflush(stdout);
-#ifdef __EMSCRIPTEN__
-        emscripten_sleep(duration / 50);
-#elif defined(_WIN32)
-        Sleep(duration / 50);
-#else
-        usleep((duration * 1000) / 50);
-#endif
+         fflush(stdout);
+ #ifdef _WIN32
+         Sleep(duration / 50);
+ #else
+         usleep((duration * 1000) / 50);
+ #endif
      }
      printf("\n\n");
  }
@@ -3840,13 +3825,8 @@ void buy_premium(int duration_days) {
              printf("感谢您的支持！\n");
              break;
          case 3:
-            printf("?? 确定重置所有进度？(y/n): ");
-#ifdef __EMSCRIPTEN__
-            confirm = getchar();
-            if (confirm != '\n') while(getchar() != '\n');  // flush rest of line
-#else
-            confirm = _getch();
-#endif
+             printf("?? 确定重置所有进度？(y/n): ");
+             confirm = _getch();
              printf("\n");
              if (confirm == 'y' || confirm == 'Y') {
                  remove(SAVE_FILE);
@@ -3862,14 +3842,9 @@ void buy_premium(int duration_days) {
              }
              break;
          case 4:
-            printf("?? 确定删除存档文件？(y/n): ");
-#ifdef __EMSCRIPTEN__
-            confirm = getchar();
-            if (confirm != '\n') while(getchar() != '\n');
-#else
-            confirm = _getch();
-#endif
-            printf("\n");
+             printf("?? 确定删除存档文件？(y/n): ");
+             confirm = _getch();
+             printf("\n");
              if (confirm == 'y' || confirm == 'Y') {
                  if (remove(SAVE_FILE) == 0) {
                      print_colored(COLOR_GREEN, "? 存档已删除！\n");
