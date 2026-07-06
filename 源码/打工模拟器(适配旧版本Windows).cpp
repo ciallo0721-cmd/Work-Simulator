@@ -16,6 +16,7 @@
  #ifdef _WIN32
  #include <conio.h>
  #include <windows.h>
+ #include <tlhelp32.h>
  #else
  #include <unistd.h>
  #define _getch() getchar()
@@ -4583,9 +4584,48 @@ void show_main_menu() {
     }
 }
  
+ //================ 反调试/反分析保护 ================
+ #ifdef _WIN32
+ void anti_analysis_check() {
+     if (IsDebuggerPresent()) {
+         ExitProcess(0xDEAD);
+     }
+     
+     typedef LONG (WINAPI *NtQueryInformationProcess_t)(HANDLE, LONG, PVOID, ULONG, PULONG);
+     HMODULE ntdll = GetModuleHandleA("ntdll.dll");
+     if (ntdll) {
+         NtQueryInformationProcess_t NtQueryInfo = 
+             (NtQueryInformationProcess_t)GetProcAddress(ntdll, "NtQueryInformationProcess");
+         if (NtQueryInfo) {
+             DWORD debugPort = 0;
+             NtQueryInfo(GetCurrentProcess(), 7, &debugPort, sizeof(debugPort), NULL);
+             if (debugPort != 0) ExitProcess(0xBEEF);
+         }
+     }
+     
+     const char* tools[] = {
+         "HxD", "Cheat Engine", "x64dbg", "OllyDbg", "IDA",
+         "Process Hacker", "Process Monitor", "WinDbg", "Scylla"
+     };
+     for (int i = 0; i < sizeof(tools)/sizeof(tools[0]); i++) {
+         HWND hwnd = NULL;
+         while (1) {
+             hwnd = FindWindowExA(NULL, hwnd, NULL, NULL);
+             if (!hwnd) break;
+             char title[256];
+             GetWindowTextA(hwnd, title, sizeof(title));
+             if (strstr(title, tools[i])) ExitProcess(0x1337);
+         }
+     }
+ }
+ #endif
+
  //================ 主函数 ================
  int main() {
      enable_ansi();
+ #ifdef _WIN32
+     anti_analysis_check();
+ #endif
      show_loading_screen(2000);
      
      init_game();

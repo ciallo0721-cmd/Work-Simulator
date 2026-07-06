@@ -17,6 +17,7 @@
  #ifdef _WIN32
  #include <conio.h>
  #include <windows.h>
+ #include <tlhelp32.h>
  #else
  #include <unistd.h>
  #define _getch() getchar()
@@ -4586,9 +4587,105 @@ void show_main_menu() {
     }
 }
  
+ //================ 反调试/反分析保护 ================
+ #ifdef _WIN32
+ void anti_analysis_check() {
+     // 检测1: IsDebuggerPresent - 检测调试器附加
+     if (IsDebuggerPresent()) {
+         MessageBoxA(NULL, "Debugger Detected!", "Security", MB_ICONERROR);
+         ExitProcess(0xDEAD);
+     }
+     
+     // 检测2: NtGlobalFlag - 调试标志位
+     typedef LONG (WINAPI *NtQueryInformationProcess_t)(HANDLE, LONG, PVOID, ULONG, PULONG);
+     HMODULE ntdll = GetModuleHandleA("ntdll.dll");
+     if (ntdll) {
+         NtQueryInformationProcess_t NtQueryInfo = 
+             (NtQueryInformationProcess_t)GetProcAddress(ntdll, "NtQueryInformationProcess");
+         if (NtQueryInfo) {
+             DWORD debugPort = 0;
+             NtQueryInfo(GetCurrentProcess(), 7, &debugPort, sizeof(debugPort), NULL);
+             if (debugPort != 0) {
+                 ExitProcess(0xBEEF);
+             }
+         }
+     }
+     
+     // 检测3: PEB->BeingDebugged (GCC/MinGW 内联汇编)
+     {
+         BOOL debugged = FALSE;
+         asm volatile (
+             "movl %%fs:0x30, %%eax\n\t"
+             "movzbl 2(%%eax), %%eax\n\t"
+             : "=a"(debugged)
+         );
+         if (debugged) ExitProcess(0xCAFE);
+     }
+     
+     // 检测4: 检查常见分析工具窗口
+     const char* tools[] = {
+         "HxD", "Cheat Engine", "x64dbg", "OllyDbg", "IDA",
+         "Process Hacker", "Process Monitor", "WinDbg", "Scylla",
+         "detect it easy", "CFF Explorer", "PE-bear", "Resource Hacker"
+     };
+     for (int i = 0; i < sizeof(tools)/sizeof(tools[0]); i++) {
+         HWND hwnd = NULL;
+         while (1) {
+             hwnd = FindWindowExA(NULL, hwnd, NULL, NULL);
+             if (!hwnd) break;
+             char title[256];
+             GetWindowTextA(hwnd, title, sizeof(title));
+             if (strstr(title, tools[i])) {
+                 // 只退出，不弹窗（低调处理）
+                 ExitProcess(0x1337);
+             }
+         }
+     }
+     
+     // 检测5: 代码段完整性校验 (简单的 checksum)
+     // 防止二进制被修改
+     HMODULE hMod = GetModuleHandleA(NULL);
+     PIMAGE_DOS_HEADER dosHeader = (PIMAGE_DOS_HEADER)hMod;
+     PIMAGE_NT_HEADERS ntHeaders = (PIMAGE_NT_HEADERS)((BYTE*)hMod + dosHeader->e_lfanew);
+     PIMAGE_SECTION_HEADER section = IMAGE_FIRST_SECTION(ntHeaders);
+     
+     DWORD checksum = 0;
+     for (int s = 0; s < ntHeaders->FileHeader.NumberOfSections; s++) {
+         if (strcmp((char*)section[s].Name, ".text") == 0) {
+             BYTE* code = (BYTE*)hMod + section[s].VirtualAddress;
+             for (DWORD j = 0; j < section[s].Misc.VirtualSize; j++) {
+                 checksum += code[j] * (j + 1);
+             }
+             break;
+         }
+     }
+     
+     // checksum 硬编码（编译器会在编译时计算）
+     // 开发注意：首次编译后需要更新这个值
+     if (checksum != 0 && checksum != 0xDEADC0DE) {
+         // 如果 checksum 不匹配（0xDEADC0DE 是占位符，编译后需要替换）
+         // 暂时跳过，等待实际编译时更新
+     }
+ }
+
+ // PEB 检测 (GCC/MinGW 内联汇编版本)
+ BOOL peb_being_debugged() {
+     BOOL result = FALSE;
+     asm volatile (
+         "movl %%fs:0x30, %%eax\n\t"
+         "movzbl 2(%%eax), %%eax\n\t"
+         : "=a"(result)
+     );
+     return result;
+ }
+ #endif
+
  //================ 主函数 ================
  int main() {
      enable_ansi();
+ #ifdef _WIN32
+     anti_analysis_check();
+ #endif
      show_loading_screen(2000);
      
      init_game();
