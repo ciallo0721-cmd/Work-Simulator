@@ -1,6 +1,7 @@
 /*
- * 打工模拟器 v3.0 - 完整版
- * 修复所有bug并完善功能
+ * 打工模拟器 v4.0 - 坤城篇
+ * 世界：坤城 —— 一座虚构的当代中国沿海城市，300万人口的欲望都市
+ * 叙事主题："在一个人人都想往上爬的城市里，你要成为什么样的人？"
  * 编译环境: Windows/Linux, C11/C++兼容
  * 编译命令: gcc -o worker_sim worker_simulator.c -lm
  */
@@ -36,7 +37,7 @@
  #define MAX_SHOP_ITEMS 30
  #define MAX_COMPANY_LEVELS 10
  #define SAVE_FILE "worker_sim_save.dat"
- #define SAVE_VERSION 4
+ #define SAVE_VERSION 5  // v4.0 坤城世界观
  
  // 货币限制常量
  #define MAX_KUN_COINS 9223372036854775807LL
@@ -626,7 +627,7 @@
  
  void show_loading_screen(int duration) {
      CLEAR_SCREEN();
-     print_centered("打工模拟器 v3.0");
+     print_centered("打工模拟器 v4.0 - 坤城篇");
      printf("\n\n");
      print_centered("加载中...");
      printf("\n    ");
@@ -727,13 +728,23 @@
          printf(COLOR_YELLOW COLOR_BOLD);
          printf("\n  ╔═══════════════════════════════════════════════════════════╗\n");
          printf("  ║                                                           ║\n");
-         printf("  ║              欢迎来到打工模拟器！                          ║\n");
+         printf("  ║            欢迎来到 打工模拟器 v4.0 — 坤城篇               ║\n");
          printf("  ║              Welcome to Worker Simulator!                  ║\n");
          printf("  ║                                                           ║\n");
          printf("  ╚═══════════════════════════════════════════════════════════╝\n");
          printf(COLOR_RESET);
 
-         printf("\n  请输入你的名字（最多49个字符）: ");
+         printf("\n");
+         print_colored(COLOR_CYAN, "  「坤城不问你的过去，只问你的价格。」\n\n");
+         printf("  你来到了坤城——一座没有明确地理位置的沿海都市，约300万人口。\n");
+         printf("  这里的人来自五湖四海：有人在CBD穿着西装谈百万生意，\n");
+         printf("  有人在老城区出租屋里算着明天的饭钱。\n");
+         printf("  今天还在路边摆摊的人，明天可能开奔驰——但也可能反过来。\n\n");
+         printf("  你兜里只有500坤币，租住在老城区的一间小屋里。\n");
+         printf("  手上有一部手机，一个聊天室账号，和一颗想往上爬的心。\n\n");
+         print_colored(COLOR_YELLOW, "  坤城的故事，从今天开始。\n\n");
+
+         printf("  请输入你的名字（最多49个字符）: ");
          char input_name[50];
          if (fgets(input_name, sizeof(input_name), stdin) != NULL) {
              // 去除换行符
@@ -897,7 +908,7 @@
      tasks[0].energy_cost = 5;
      tasks[0].unlock_cost = 0;
      tasks[0].is_unlocked = true;
-     safe_strcpy(tasks[0].description, "驾驶出租车接送客人", 150);
+     safe_strcpy(tasks[0].description, "在老城区和CBD之间穿梭，接送坤城的过客", 150);
      tasks[0].success_rate = 0.9f;
      tasks[0].required_skills[0] = SKILL_SPEED;
      tasks[0].required_skill_level[0] = 0;
@@ -909,7 +920,7 @@
      tasks[1].experience_gain = 20;
      tasks[1].energy_cost = 10;
      tasks[1].unlock_cost = 500;
-     safe_strcpy(tasks[1].description, "在森林中砍伐树木", 150);
+     safe_strcpy(tasks[1].description, "在开发区外围的林地挥洒汗水", 150);
      tasks[1].success_rate = 0.8f;
      tasks[1].required_skills[0] = SKILL_STRENGTH;
      tasks[1].required_skill_level[0] = 1;
@@ -921,7 +932,7 @@
      tasks[2].experience_gain = 30;
      tasks[2].energy_cost = 15;
      tasks[2].unlock_cost = 2000;
-     safe_strcpy(tasks[2].description, "配送外卖订单", 150);
+     safe_strcpy(tasks[2].description, "骑着电动车飞奔在坤城的大街小巷", 150);
      tasks[2].success_rate = 0.85f;
      tasks[2].required_skills[0] = SKILL_SPEED;
      tasks[2].required_skills[1] = SKILL_ENDURANCE;
@@ -935,7 +946,7 @@
      tasks[3].experience_gain = 40;
      tasks[3].energy_cost = 20;
      tasks[3].unlock_cost = 5000;
-     safe_strcpy(tasks[3].description, "在高级餐厅服务", 150);
+     safe_strcpy(tasks[3].description, "在CBD的高级餐厅里笑脸迎人", 150);
      tasks[3].success_rate = 0.75f;
      tasks[3].required_skills[0] = SKILL_CHARISMA;
      tasks[3].required_skills[1] = SKILL_SPEED;
@@ -949,7 +960,7 @@
      tasks[4].experience_gain = 60;
      tasks[4].energy_cost = 25;
      tasks[4].unlock_cost = 10000;
-     safe_strcpy(tasks[4].description, "编写软件代码", 150);
+     safe_strcpy(tasks[4].description, "在科技园的格子间里敲代码改Bug", 150);
      tasks[4].success_rate = 0.7f;
      tasks[4].required_skills[0] = SKILL_INTELLIGENCE;
      tasks[4].required_skills[1] = SKILL_CREATIVITY;
@@ -963,7 +974,7 @@
      tasks[5].experience_gain = 80;
      tasks[5].energy_cost = 30;
      tasks[5].unlock_cost = 20000;
-     safe_strcpy(tasks[5].description, "进行股票交易", 150);
+     safe_strcpy(tasks[5].description, "在坤城金融中心的交易大厅搏杀", 150);
      tasks[5].success_rate = 0.6f;
      tasks[5].required_skills[0] = SKILL_INTELLIGENCE;
      tasks[5].required_skills[1] = SKILL_LUCK;
@@ -979,7 +990,7 @@
      tasks[6].experience_gain = 100;
      tasks[6].energy_cost = 35;
      tasks[6].unlock_cost = 50000;
-     safe_strcpy(tasks[6].description, "销售高端房产", 150);
+     safe_strcpy(tasks[6].description, "带客户看遍坤城各区的高端楼盘", 150);
      tasks[6].success_rate = 0.65f;
      tasks[6].required_skills[0] = SKILL_CHARISMA;
      tasks[6].required_skills[1] = SKILL_NEGOTIATION;
@@ -995,7 +1006,7 @@
      tasks[7].experience_gain = 150;
      tasks[7].energy_cost = 40;
      tasks[7].unlock_cost = 100000;
-     safe_strcpy(tasks[7].description, "创办自己的企业", 150);
+     safe_strcpy(tasks[7].description, "在坤城创立自己的公司，雇佣第一批员工", 150);
      tasks[7].success_rate = 0.55f;
      tasks[7].required_skills[0] = SKILL_LEADERSHIP;
      tasks[7].required_skills[1] = SKILL_MANAGEMENT;
@@ -1011,7 +1022,7 @@
      tasks[8].experience_gain = 200;
      tasks[8].energy_cost = 45;
      tasks[8].unlock_cost = 200000;
-     safe_strcpy(tasks[8].description, "投资创业公司", 150);
+     safe_strcpy(tasks[8].description, "坐在办公室里决策——投资坤城的未来", 150);
      tasks[8].success_rate = 0.5f;
      tasks[8].required_skills[0] = SKILL_INTELLIGENCE;
      tasks[8].required_skills[1] = SKILL_LUCK;
@@ -1027,7 +1038,7 @@
      tasks[9].experience_gain = 300;
      tasks[9].energy_cost = 50;
      tasks[9].unlock_cost = 500000;
-     safe_strcpy(tasks[9].description, "探索未知领域", 150);
+     safe_strcpy(tasks[9].description, "探索坤城不为人知的角落——有些地方地图上没有", 150);
      tasks[9].success_rate = 0.4f;
      tasks[9].required_skills[0] = SKILL_ENDURANCE;
      tasks[9].required_skills[1] = SKILL_LUCK;
@@ -1043,30 +1054,30 @@
      }
  }
  
- void init_market() {
-     // 家具类物品
-     MarketItem items[] = {
-         {"电视", 300, 50, RARITY_COMMON, false, 0, "基本的娱乐设备", 0.1f, 1, 1.0f},
-         {"椅子", 100, 20, RARITY_COMMON, false, 0, "舒适的座椅", 0.05f, 1, 1.0f},
-         {"沙发", 500, 100, RARITY_UNCOMMON, false, 0, "豪华沙发", 0.2f, 3, 1.1f},
-         {"游泳池", 2000, 500, RARITY_RARE, false, 0, "私人游泳池", 0.5f, 10, 1.2f},
-         {"黄金马桶", 10000, 2000, RARITY_EPIC, false, 0, "奢华的马桶", 1.0f, 20, 1.3f},
-         {"名画", 1500, 300, RARITY_RARE, false, 0, "著名画作", 0.3f, 5, 1.15f},
-         {"水晶吊灯", 3000, 800, RARITY_EPIC, false, 0, "华丽的水晶灯", 0.6f, 15, 1.25f},
-         {"家庭影院", 5000, 1500, RARITY_EPIC, false, 0, "顶级影音系统", 0.8f, 18, 1.3f},
-         {"工作台", 800, 200, RARITY_UNCOMMON, false, 0, "提升工作效率", 0.25f, 5, 1.1f},
-         {"健身房", 2500, 600, RARITY_RARE, false, 0, "锻炼身体", 0.4f, 12, 1.2f},
-         {"游戏机", 600, 120, RARITY_UNCOMMON, false, 0, "娱乐游戏设备", 0.15f, 4, 1.05f},
-         {"按摩椅", 1200, 250, RARITY_RARE, false, 0, "放松身心", 0.35f, 8, 1.15f},
-         {"智能音箱", 200, 40, RARITY_COMMON, false, 0, "智能家居设备", 0.08f, 2, 1.02f},
-         {"空气净化器", 400, 80, RARITY_COMMON, false, 0, "净化空气", 0.12f, 3, 1.03f},
-         {"咖啡机", 350, 70, RARITY_COMMON, false, 0, "制作咖啡", 0.1f, 3, 1.03f},
-         {"书柜", 450, 90, RARITY_UNCOMMON, false, 0, "存放书籍", 0.14f, 4, 1.04f},
-         {"钢琴", 3000, 700, RARITY_RARE, false, 0, "音乐乐器", 0.5f, 12, 1.2f},
-         {"台球桌", 2000, 500, RARITY_RARE, false, 0, "娱乐设施", 0.4f, 10, 1.18f},
-         {"酒柜", 1500, 350, RARITY_UNCOMMON, false, 0, "存放美酒", 0.3f, 8, 1.12f},
-         {"保险箱", 800, 200, RARITY_UNCOMMON, false, 0, "存放贵重物品", 0.2f, 6, 1.08f}
-     };
+void init_market() {
+    // 家具类物品 —— 坤城世界观 v4.0（NDD flavor text）
+    MarketItem items[] = {
+        {"电视", 300, 50, RARITY_COMMON, false, 0, "屏幕里的人在笑。屏幕外的人在看。——有时候分不清哪个才是真的", 0.1f, 1, 1.0f},
+        {"椅子", 100, 20, RARITY_COMMON, false, 0, "老城区出租屋标配，坐上去嘎吱响", 0.05f, 1, 1.0f},
+        {"沙发", 500, 100, RARITY_UNCOMMON, false, 0, "终于不用坐在破椅子上了", 0.2f, 3, 1.1f},
+        {"游泳池", 2000, 500, RARITY_RARE, false, 0, "坤城没有海。所以你买了这个", 0.5f, 10, 1.2f},
+        {"黄金马桶", 10000, 2000, RARITY_EPIC, false, 0, "它不能让你更舒服。但它能让你忘记不舒服", 1.0f, 20, 1.3f},
+        {"名画", 1500, 300, RARITY_RARE, false, 0, "坤城的拍卖行里淘来的——也可能是赝品", 0.3f, 5, 1.15f},
+        {"水晶吊灯", 3000, 800, RARITY_EPIC, false, 0, "老城区的出租屋里挂水晶灯？邻居会来围观的", 0.6f, 15, 1.25f},
+        {"家庭影院", 5000, 1500, RARITY_EPIC, false, 0, "在坤城的夜晚，一个人看一部电影", 0.8f, 18, 1.3f},
+        {"工作台", 800, 200, RARITY_UNCOMMON, false, 0, "每天晚上趴在这里的时候，像在键盘上挖煤的矿工", 0.25f, 5, 1.1f},
+        {"健身房", 2500, 600, RARITY_RARE, false, 0, "坤城的外卖太多，你得动一动", 0.4f, 12, 1.2f},
+        {"游戏机", 600, 120, RARITY_UNCOMMON, false, 0, "在坤城打完工回到家，打开游戏机——这才是生活", 0.15f, 4, 1.05f},
+        {"按摩椅", 1200, 250, RARITY_RARE, false, 0, "跑了一天的出租车后，腰终于不是自己的了——是椅子的", 0.35f, 8, 1.15f},
+        {"智能音箱", 200, 40, RARITY_COMMON, false, 0, "对着它喊'放首歌'，坤城的夜晚就没那么安静了", 0.08f, 2, 1.02f},
+        {"空气净化器", 400, 80, RARITY_COMMON, false, 0, "开发区那边的PM2.5有点高，有备无患", 0.12f, 3, 1.03f},
+        {"咖啡机", 350, 70, RARITY_COMMON, false, 0, "坤城的打工人不需要睡眠——需要的是咖啡", 0.1f, 3, 1.03f},
+        {"书柜", 450, 90, RARITY_UNCOMMON, false, 0, "在坤城，知识也许能改变命运。也许不能。但看看总没错", 0.14f, 4, 1.04f},
+        {"钢琴", 3000, 700, RARITY_RARE, false, 0, "富人区的孩子都会弹。你自学也可以", 0.5f, 12, 1.2f},
+        {"台球桌", 2000, 500, RARITY_RARE, false, 0, "开发区那边的工友们周末的娱乐", 0.4f, 10, 1.18f},
+        {"酒柜", 1500, 350, RARITY_UNCOMMON, false, 0, "坤城的生意有一半是在酒桌上谈成的", 0.3f, 8, 1.12f},
+        {"保险箱", 800, 200, RARITY_UNCOMMON, false, 0, "在坤城，你得学会保管好自己的东西", 0.2f, 6, 1.08f}
+    };
      
      int item_count = sizeof(items) / sizeof(items[0]);
      for (int i = 0; i < item_count && i < MAX_MARKET; i++) {
@@ -1074,29 +1085,39 @@
      }
  }
  
- void init_achievements() {
-     Achievement achievements[] = {
-         {"第一桶金", "赚取100坤币", 100, 50, 10, false, 0},
-         {"家具收藏家", "收集5件家具", 5, 200, 20, false, 0},
-         {"打工达人", "完成50次任务", 50, 500, 50, false, 0},
-         {"股市之神", "股票投资获利1000坤币", 1000, 800, 80, false, 0},
-         {"幸运儿", "赢得彩票大奖", 1, 1000, 100, false, 0},
-         {"百万富翁", "拥有100万坤币", 1000000, 5000, 500, false, 0},
-         {"等级大师", "达到50级", 50, 2000, 200, false, 0},
-         {"技能专家", "将一项技能升到10级", 10, 1500, 150, false, 0},
-         {"任务狂人", "完成1000次任务", 1000, 3000, 300, false, 0},
-         {"社交达人", "拥有5个好友", 5, 1000, 100, false, 0},
-         {"宠物爱好者", "拥有3只宠物", 3, 1500, 150, false, 0},
-         {"房产大亨", "拥有5处房产", 5, 4000, 400, false, 0},
-         {"全技能大师", "所有技能达到5级", 5, 5000, 500, false, 0},
-         {"限定收藏家", "收集所有限定物品", 10, 6000, 600, false, 0},
-         {"成就猎人", "解锁20个成就", 20, 3000, 300, false, 0},
-         {"初次转生", "完成第一次声望重置", 1, 10000, 1000, false, 0},
-         {"传奇重生", "达到声望等级5", 5, 50000, 5000, false, 0},
-         {"BOSS克星", "击败10次BOSS", 10, 8000, 800, false, 0},
-         {"节日之魂", "参与5次节日活动", 5, 5000, 500, false, 0},
-         {"合成大师", "合成10次物品", 10, 3000, 300, false, 0}
-     };
+void init_achievements() {
+    Achievement achievements[] = {
+        {"第一桶金", "赚取100坤币——坤城的第一步", 100, 50, 10, false, 0},
+        {"家具收藏家", "收集5件家具——老城区的出租屋开始有家的样子了", 5, 200, 20, false, 0},
+        {"打工达人", "完成50次任务——坤城的各行各业都留下了你的脚印", 50, 500, 50, false, 0},
+        {"股市新手", "股票投资获利1000坤币——第一次尝到资本的甜头", 1000, 800, 80, false, 0},
+        {"幸运儿", "赢得彩票大奖——坤城今天对你微笑了", 1, 1000, 100, false, 0},
+        {"百万富翁", "拥有100万坤币——在坤城，你终于可以抬起头了", 1000000, 5000, 500, false, 0},
+        {"等级大师", "达到50级——坤城的每个角落都认识你了", 50, 2000, 200, false, 0},
+        {"技能专家", "将一项技能升到10级——在这个领域，坤城没人比你更懂", 10, 1500, 150, false, 0},
+        {"任务狂人", "完成1000次任务——你的身体发出了最后一次警告，然后放弃了警告", 1000, 3000, 300, false, 0},
+        {"社交达人", "拥有5个好友——坤城有三百万人，其中五个认可了你", 5, 1000, 100, false, 0},
+        {"宠物爱好者", "拥有3只宠物——在坤城，它们是你最忠诚的伙伴", 3, 1500, 150, false, 0},
+        {"房产大亨", "拥有5处房产——从老城区到富人区，坤城到处都有你的家", 5, 4000, 400, false, 0},
+        {"全技能大师", "所有技能达到5级——技多不压身，在坤城尤其如此", 5, 5000, 500, false, 0},
+        {"限定收藏家", "收集所有限定物品——坤城的限量版，都归你了", 10, 6000, 600, false, 0},
+        {"成就猎人", "解锁20个成就——坤城的故事，你正在一页页翻开", 20, 3000, 300, false, 0},
+        {"初次转生", "完成第一次声望重置——那些杀不死你的……其实差点就杀死你了", 1, 10000, 1000, false, 0},
+        {"传奇重生", "达到声望等级5——坤城的人开始用'传说'来称呼你", 5, 50000, 5000, false, 0},
+        {"BOSS克星", "击败10次BOSS——坤城的地下世界都知道你的名字", 10, 8000, 800, false, 0},
+        {"节日之魂", "参与5次节日活动——坤城的每一个节日你都没有缺席", 5, 5000, 500, false, 0},
+        {"合成大师", "合成10次物品——废品在你手里就变成了宝贝", 10, 3000, 300, false, 0},
+        // === v4.0 新增叙事型成就（NDD设计） ===
+        {"人精", "在聊天室成功识破3个骗子的谎言——坤城的骗子都开始互相提醒：小心那个太聪明的", 3, 2000, 200, false, 0},
+        {"赌怪", "靠聊天室内幕消息炒股获利超过5000——运气也是实力，这是赌徒们的谎言。但你好像不是赌徒", 5000, 3000, 300, false, 0},
+        {"破产重生", "从负债状态恢复到10000坤币——那些杀不死你的……", 10000, 5000, 500, false, 0},
+        {"社交恐怖分子", "同时有3位好友好感度达到满值——坤城有三百万人。其中三个认为你是他们最重要的人", 3, 3000, 300, false, 0},
+        {"锦鲤附体", "一天内触发3个正面随机事件——坤城今天心情好。但明天就不一定了", 3, 2000, 200, false, 0},
+        {"死神来了", "经历猝死事件后幸存——你看到了什么？有人说是白光，有人说是黑暗。你看到的是一张账单", 1, 5000, 500, false, 0},
+        {"最后的乘客", "完成第500次出租车任务——后座上坐过很多人。坤城记住了你的车灯", 500, 5000, 500, false, 0},
+        {"技术无罪", "程序员任务中拒绝3次灰色请求——在键盘上打什么字是你的自由。不打什么字也是", 3, 3000, 300, false, 0},
+        {"一言九鼎", "从未对NPC撒谎——坤城的商人有一个暗号：穿西装可以说谎，但那个人不用说", 1, 5000, 500, false, 0},
+    };
      
      int ach_count = sizeof(achievements) / sizeof(achievements[0]);
      for (int i = 0; i < ach_count && i < MAX_ACHIEVEMENTS; i++) {
@@ -1129,109 +1150,109 @@
      }
  }
  
- void init_quests() {
-     for (int i = 0; i < MAX_QUESTS; i++) {
-         memset(&player.active_quests[i], 0, sizeof(Quest));
-     }
-     
-     time_t now = time(NULL);
-     
-     // 每日任务
-     safe_strcpy(player.active_quests[0].name, "完成3个任务", 50);
-     safe_strcpy(player.active_quests[0].description, "完成任意3个任务", 200);
-     player.active_quests[0].type = QUEST_DAILY;
-     player.active_quests[0].requirement = 3;
-     player.active_quests[0].reward_coins = 300;
-     player.active_quests[0].reward_exp = 30;
-     player.active_quests[0].assigned_time = now;
-     player.active_quests[0].deadline = now + 86400;
-     
-     safe_strcpy(player.active_quests[1].name, "购买家具", 50);
-     safe_strcpy(player.active_quests[1].description, "购买任意一件家具", 200);
-     player.active_quests[1].type = QUEST_DAILY;
-     player.active_quests[1].requirement = 1;
-     player.active_quests[1].reward_coins = 200;
-     player.active_quests[1].reward_exp = 20;
-     player.active_quests[1].assigned_time = now;
-     player.active_quests[1].deadline = now + 86400;
-     
-     safe_strcpy(player.active_quests[2].name, "投资股票", 50);
-     safe_strcpy(player.active_quests[2].description, "进行一次股票投资", 200);
-     player.active_quests[2].type = QUEST_DAILY;
-     player.active_quests[2].requirement = 1;
-     player.active_quests[2].reward_coins = 400;
-     player.active_quests[2].reward_exp = 40;
-     player.active_quests[2].assigned_time = now;
-     player.active_quests[2].deadline = now + 86400;
-     
-     // 每周任务
-     safe_strcpy(player.active_quests[3].name, "赚取1万坤币", 50);
-     safe_strcpy(player.active_quests[3].description, "一周内赚取10000坤币", 200);
-     player.active_quests[3].type = QUEST_WEEKLY;
-     player.active_quests[3].requirement = 10000;
-     player.active_quests[3].reward_coins = 2000;
-     player.active_quests[3].reward_exp = 200;
-     player.active_quests[3].assigned_time = now;
-     player.active_quests[3].deadline = now + 604800;
-     
-     safe_strcpy(player.active_quests[4].name, "升级技能", 50);
-     safe_strcpy(player.active_quests[4].description, "升级任意技能3次", 200);
-     player.active_quests[4].type = QUEST_WEEKLY;
-     player.active_quests[4].requirement = 3;
-     player.active_quests[4].reward_coins = 1500;
-     player.active_quests[4].reward_exp = 150;
-     player.active_quests[4].assigned_time = now;
-     player.active_quests[4].deadline = now + 604800;
-     
-     // 主线任务
-     safe_strcpy(player.active_quests[5].name, "成为百万富翁", 50);
-     safe_strcpy(player.active_quests[5].description, "积累100万坤币", 200);
-     player.active_quests[5].type = QUEST_MAIN;
-     player.active_quests[5].requirement = 1000000;
-     player.active_quests[5].reward_coins = 10000;
-     player.active_quests[5].reward_exp = 1000;
-     player.active_quests[5].assigned_time = now;
-     player.active_quests[5].deadline = 0;
-     
-     safe_strcpy(player.active_quests[6].name, "建立公司", 50);
-     safe_strcpy(player.active_quests[6].description, "将公司升到5级", 200);
-     player.active_quests[6].type = QUEST_MAIN;
-     player.active_quests[6].requirement = 5;
-     player.active_quests[6].reward_coins = 5000;
-     player.active_quests[6].reward_exp = 500;
-     player.active_quests[6].assigned_time = now;
-     player.active_quests[6].deadline = 0;
-     
-     // 特殊任务
-     safe_strcpy(player.active_quests[7].name, "击败BOSS", 50);
-     safe_strcpy(player.active_quests[7].description, "首次击败挑战BOSS", 200);
-     player.active_quests[7].type = QUEST_SPECIAL;
-     player.active_quests[7].requirement = 1;
-     player.active_quests[7].reward_coins = 5000;
-     player.active_quests[7].reward_exp = 500;
-     player.active_quests[7].assigned_time = now;
-     player.active_quests[7].deadline = 0;
-     
-     safe_strcpy(player.active_quests[8].name, "节日参与", 50);
-     safe_strcpy(player.active_quests[8].description, "参与一次节日活动", 200);
-     player.active_quests[8].type = QUEST_SPECIAL;
-     player.active_quests[8].requirement = 1;
-     player.active_quests[8].reward_coins = 3000;
-     player.active_quests[8].reward_exp = 300;
-     player.active_quests[8].assigned_time = now;
-     player.active_quests[8].deadline = 0;
-     
-     safe_strcpy(player.active_quests[9].name, "声望之路", 50);
-     safe_strcpy(player.active_quests[9].description, "完成第一次声望重置", 200);
-     player.active_quests[9].type = QUEST_SPECIAL;
-     player.active_quests[9].requirement = 1;
-     player.active_quests[9].reward_coins = 10000;
-     player.active_quests[9].reward_exp = 1000;
-     player.active_quests[9].assigned_time = now;
-     player.active_quests[9].deadline = 0;
- }
- 
- void init_pets() {
+void init_quests() {
+    for (int i = 0; i < MAX_QUESTS; i++) {
+        memset(&player.active_quests[i], 0, sizeof(Quest));
+    }
+    
+    time_t now = time(NULL);
+    
+    // === 每日任务 —— 坤城日常 ===
+    safe_strcpy(player.active_quests[0].name, "今日打工", 50);
+    safe_strcpy(player.active_quests[0].description, "在坤城完成任意3个打工任务", 200);
+    player.active_quests[0].type = QUEST_DAILY;
+    player.active_quests[0].requirement = 3;
+    player.active_quests[0].reward_coins = 300;
+    player.active_quests[0].reward_exp = 30;
+    player.active_quests[0].assigned_time = now;
+    player.active_quests[0].deadline = now + 86400;
+    
+    safe_strcpy(player.active_quests[1].name, "布置新家", 50);
+    safe_strcpy(player.active_quests[1].description, "购买任意一件家具——出租屋也得有家的样子", 200);
+    player.active_quests[1].type = QUEST_DAILY;
+    player.active_quests[1].requirement = 1;
+    player.active_quests[1].reward_coins = 200;
+    player.active_quests[1].reward_exp = 20;
+    player.active_quests[1].assigned_time = now;
+    player.active_quests[1].deadline = now + 86400;
+    
+    safe_strcpy(player.active_quests[2].name, "学习理财", 50);
+    safe_strcpy(player.active_quests[2].description, "进行一次股票投资——在坤城，光打工是不够的", 200);
+    player.active_quests[2].type = QUEST_DAILY;
+    player.active_quests[2].requirement = 1;
+    player.active_quests[2].reward_coins = 400;
+    player.active_quests[2].reward_exp = 40;
+    player.active_quests[2].assigned_time = now;
+    player.active_quests[2].deadline = now + 86400;
+    
+    // === 每周任务 ===
+    safe_strcpy(player.active_quests[3].name, "周薪过万", 50);
+    safe_strcpy(player.active_quests[3].description, "一周内在坤城赚取10000坤币", 200);
+    player.active_quests[3].type = QUEST_WEEKLY;
+    player.active_quests[3].requirement = 10000;
+    player.active_quests[3].reward_coins = 2000;
+    player.active_quests[3].reward_exp = 200;
+    player.active_quests[3].assigned_time = now;
+    player.active_quests[3].deadline = now + 604800;
+    
+    safe_strcpy(player.active_quests[4].name, "提升自我", 50);
+    safe_strcpy(player.active_quests[4].description, "升级任意技能3次——在坤城，不学习就会被淘汰", 200);
+    player.active_quests[4].type = QUEST_WEEKLY;
+    player.active_quests[4].requirement = 3;
+    player.active_quests[4].reward_coins = 1500;
+    player.active_quests[4].reward_exp = 150;
+    player.active_quests[4].assigned_time = now;
+    player.active_quests[4].deadline = now + 604800;
+    
+    // === 主线任务 —— 坤城的人生篇章 ===
+    safe_strcpy(player.active_quests[5].name, "百万富翁", 50);
+    safe_strcpy(player.active_quests[5].description, "在坤城积累100万坤币——每一个百万富翁都是从出租屋开始的", 200);
+    player.active_quests[5].type = QUEST_MAIN;
+    player.active_quests[5].requirement = 1000000;
+    player.active_quests[5].reward_coins = 10000;
+    player.active_quests[5].reward_exp = 1000;
+    player.active_quests[5].assigned_time = now;
+    player.active_quests[5].deadline = 0;
+    
+    safe_strcpy(player.active_quests[6].name, "建立事业", 50);
+    safe_strcpy(player.active_quests[6].description, "将公司升到5级——在坤城拥有自己的事业", 200);
+    player.active_quests[6].type = QUEST_MAIN;
+    player.active_quests[6].requirement = 5;
+    player.active_quests[6].reward_coins = 5000;
+    player.active_quests[6].reward_exp = 500;
+    player.active_quests[6].assigned_time = now;
+    player.active_quests[6].deadline = 0;
+    
+    // === 特殊任务 —— 坤城里程碑 ===
+    safe_strcpy(player.active_quests[7].name, "首次挑战", 50);
+    safe_strcpy(player.active_quests[7].description, "击败挑战BOSS——坤城的地下世界等着你的名字", 200);
+    player.active_quests[7].type = QUEST_SPECIAL;
+    player.active_quests[7].requirement = 1;
+    player.active_quests[7].reward_coins = 5000;
+    player.active_quests[7].reward_exp = 500;
+    player.active_quests[7].assigned_time = now;
+    player.active_quests[7].deadline = 0;
+    
+    safe_strcpy(player.active_quests[8].name, "节日初体验", 50);
+    safe_strcpy(player.active_quests[8].description, "参与一次节日活动——坤城的节日，一个人过可不行", 200);
+    player.active_quests[8].type = QUEST_SPECIAL;
+    player.active_quests[8].requirement = 1;
+    player.active_quests[8].reward_coins = 3000;
+    player.active_quests[8].reward_exp = 300;
+    player.active_quests[8].assigned_time = now;
+    player.active_quests[8].deadline = 0;
+    
+    safe_strcpy(player.active_quests[9].name, "重生之路", 50);
+    safe_strcpy(player.active_quests[9].description, "完成第一次声望重置——放下一切重新开始，坤城会记得你", 200);
+    player.active_quests[9].type = QUEST_SPECIAL;
+    player.active_quests[9].requirement = 1;
+    player.active_quests[9].reward_coins = 10000;
+    player.active_quests[9].reward_exp = 1000;
+    player.active_quests[9].assigned_time = now;
+    player.active_quests[9].deadline = 0;
+}
+
+void init_pets() {
      const char* pet_names[] = {"小咪", "旺财", "小鹦", "小焰", "凤儿"};
      float pet_bonus[] = {1.05f, 1.08f, 1.10f, 1.15f, 1.20f};
      
@@ -1283,10 +1304,11 @@
      player.current_company_level = 0;
  }
  
- void init_stocks() {
-     const char* stock_names[] = {"坤坤科技", "外卖速递", "房地产集团", "能源公司", "娱乐传媒"};
-     int base_prices[] = {100, 50, 200, 150, 80};
-     int volatilities[] = {10, 15, 8, 12, 20};
+void init_stocks() {
+    // 坤城股票市场 —— 5支代表性股票
+    const char* stock_names[] = {"坤坤科技", "外卖速递", "坤城地产", "坤能集团", "星光传媒"};
+    int base_prices[] = {100, 50, 200, 150, 80};
+    int volatilities[] = {10, 15, 8, 12, 20};
      
      for (int i = 0; i < 5; i++) {
          safe_strcpy(player.stocks[i].name, stock_names[i], 50);
@@ -1329,8 +1351,15 @@
      }
  }
  
- void init_friends() {
-     const char* names[] = {"小明", "小红", "小刚", "李华", "王芳", "张伟", "刘洋", "陈静", "赵磊", "周梅"};
+void init_friends() {
+    // 好友列表 —— 坤城世界观 v4.0
+    // 角色身份（NDD设定）：
+    //   小明=实干派引路人(出租车老油条)  小红=实干派同行(外卖拼命三娘)
+    //   小刚=实干派冤家(莽撞伐木工)      李华=智力派引路人(快乐程序员)
+    //   王芳=智力派同伴(连续创业者)      张伟=智力派对手(竞争老板)
+    //   刘洋=社交派引路人(八面玲珑中介)  陈静=社交派同伴(销售女王)
+    //   赵磊=社交派门路(神秘掮客)        周梅=中立观察者(记者)
+    const char* names[] = {"小明", "小红", "小刚", "李华", "王芳", "张伟", "刘洋", "陈静", "赵磊", "周梅"};
      
      for (int i = 0; i < MAX_FRIENDS; i++) {
          safe_strcpy(potential_friends[i].username, names[i % 10], 30);
@@ -1342,24 +1371,25 @@
      }
  }
  
- void init_chat_room() {
-     // 初始化聊天室人物
-     struct {
-         const char* name;
-         ChatterType type;
-         const char* personality;
-     } chatter_data[] = {
-         {"路人甲", CHATTER_NORMAL, "喜欢闲聊，友善"},
-         {"小妹", CHATTER_NORMAL, "活泼开朗的女大学生"},
-         {"老陈", CHATTER_NORMAL, "退休大爷，喜欢分享人生经验"},
-         {"投资大师", CHATTER_SCAMMER, "专业骗子，装成投资顾问"},
-         {"内部消息", CHATTER_SCAMMER, "声称有内幕消息"},
-         {"神秘人", CHATTER_BLACKMARKET, "从事灰色产业"},
-         {"深夜司机", CHATTER_BLACKMARKET, "提供特殊服务途径"},
-         {"小甜心", CHATTER_TONGCHENG, "同城交友"},
-         {"温柔姐姐", CHATTER_TONGCHENG, "陪聊服务"},
-         {"大学生兼职", CHATTER_TONGCHENG, "勤工俭学"}
-     };
+void init_chat_room() {
+    // 初始化聊天室人物 —— 坤城世界观 v4.0
+    // 角色深度来自 NDD（叙事设计文档）voice pillar 设定
+    struct {
+        const char* name;
+        ChatterType type;
+        const char* personality;
+    } chatter_data[] = {
+        {"路人甲", CHATTER_NORMAL, "普通上班族，聊天室气氛组。嘴上说'还行吧'，其实特别在意。口头禅：'害，就是——'"},
+        {"小妹", CHATTER_NORMAL, "在读大学生，家境一般，打零工维持生活。越活泼的时候越藏着难过。口头禅：'离谱''我人没了'"},
+        {"老陈", CHATTER_NORMAL, "退休国企工人，聊天室里的长辈。儿子在大城市一年回来一次。口头禅：'我跟你说——'"},
+        {"投资大师", CHATTER_SCAMMER, "职业骗子，装成金融精英。自己也曾被更大的骗子骗过。口头禅：'一般人我不告诉他'"},
+        {"内部消息", CHATTER_SCAMMER, "跟风型骗子，说话留半句等你追问。口头禅：'不方便多说''你懂的'"},
+        {"神秘人", CHATTER_BLACKMARKET, "灰色产业从业者，惜字如金。想赚够钱'上岸'。不说话才是他的风格"},
+        {"深夜司机", CHATTER_BLACKMARKET, "夜间活跃的灰色角色，跑网约车顺便做小生意。想给孩子攒够学费"},
+        {"小甜心", CHATTER_TONGCHENG, "提供陪伴服务的同城网友，甜是营业，累是真相。被前男友骗光积蓄"},
+        {"温柔姐姐", CHATTER_TONGCHENG, "年长女性走知心姐姐路线，离婚独自抚养孩子。口头禅：'辛苦了''你也不容易'"},
+        {"大学生兼职", CHATTER_TONGCHENG, "和小妹类似但走了不同路的大学生，靠特殊兼职维持生活。口头禅：'别说出去'"}
+    };
      
      int chatter_count = sizeof(chatter_data) / sizeof(chatter_data[0]);
      for (int i = 0; i < chatter_count && i < MAX_CHATTERS; i++) {
@@ -1370,9 +1400,9 @@
      }
      player.chatter_count = chatter_count;
      
-     // 添加欢迎消息
-     add_chat_message("系统", "欢迎来到聊天室！请遵守社区规则。", CHATTER_NORMAL);
-     add_chat_message("系统", "可以 @某人 来回复或提出请求。", CHATTER_NORMAL);
+    // 添加欢迎消息 —— 坤城聊天室
+    add_chat_message("系统", "欢迎来到坤城聊天室！请遵守社区规则。", CHATTER_NORMAL);
+    add_chat_message("系统", "可以 @某人 来回复或提出请求。坤城什么人都有，小心辨别。", CHATTER_NORMAL);
  }
  
  void add_chat_message(const char* sender, const char* content, ChatterType type) {
@@ -1436,56 +1466,145 @@
      printf("\n");
  }
  
- void ai_chatter_response(int chatter_index, const char* player_message) {
-     if (chatter_index < 0 || chatter_index >= player.chatter_count) return;
-     
-     Chatter* chatter = &player.chatters[chatter_index];
-     char response[200];
-     
-     // 规则式AI响应
-     switch (chatter->type) {
-         case CHATTER_NORMAL:
-             if (strstr(player_message, "你好") || strstr(player_message, "hi")) {
-                 sprintf(response, "你好啊！今天过得怎么样？");
-             } else if (strstr(player_message, "工作") || strstr(player_message, "打工")) {
-                 sprintf(response, "我也在打工呢，累死了...");
-             } else if (strstr(player_message, "游戏")) {
-                 sprintf(response, "最近在玩打工模拟器，挺有意思的！");
-             } else {
-                 sprintf(response, "嗯嗯，你说得对。");
-             }
-             break;
-             
-         case CHATTER_SCAMMER:
-             if (strstr(player_message, "赚钱") || strstr(player_message, "投资")) {
-                 sprintf(response, "我有个内部项目，回报率300%！要不要了解一下？");
-             } else if (strstr(player_message, "彩票")) {
-                 sprintf(response, "我有彩票内幕消息，保证中奖！");
-             } else {
-                 sprintf(response, "兄弟，想发财吗？加我私聊。");
-             }
-             break;
-             
-         case CHATTER_BLACKMARKET:
-             if (strstr(player_message, "OD") || strstr(player_message, "药物")) {
-                 sprintf(response, "有需要？私聊详谈。");
-             } else if (strstr(player_message, "赚钱")) {
-                 sprintf(response, "有来钱快的路子，敢不敢试？");
-             } else {
-                 sprintf(response, "想了解灰色产业吗？");
-             }
-             break;
-             
-         case CHATTER_TONGCHENG:
-             if (strstr(player_message, "约") || strstr(player_message, "见面")) {
-                 sprintf(response, "私聊我哦~");
-             } else if (strstr(player_message, "聊天")) {
-                 sprintf(response, "可以陪你聊天，按小时收费~");
-             } else {
-                 sprintf(response, "要一起出来玩吗？");
-             }
-             break;
-     }
+void ai_chatter_response(int chatter_index, const char* player_message) {
+    if (chatter_index < 0 || chatter_index >= player.chatter_count) return;
+    
+    Chatter* chatter = &player.chatters[chatter_index];
+    char response[200];
+    
+    // === 规则式AI响应 —— 按NDD角色语音支柱设计 ===
+    switch (chatter->type) {
+        case CHATTER_NORMAL: {
+            // 根据角色名匹配独特的说话风格
+            if (strcmp(chatter->name, "小妹") == 0) {
+                if (strstr(player_message, "兼职") || strstr(player_message, "打工")) {
+                    sprintf(response, "今天兼职站了六个小时，脚已经不是我的了。但是发工资的时候：我又可以了。");
+                } else if (strstr(player_message, "累") || strstr(player_message, "崩溃")) {
+                    sprintf(response, "真的服了……算了不提了。你也是一个人在这座城市吗？");
+                } else if (strstr(player_message, "室友")) {
+                    sprintf(response, "室友又在讨论去哪旅游。我说我打工没空。其实没人问我。");
+                } else if (strstr(player_message, "你好") || strstr(player_message, "hi")) {
+                    sprintf(response, "嗨嗨～今天课好多，上课摸鱼中……");
+                } else {
+                    sprintf(response, "离谱！今天又是充实的一天呢（指累成狗）。");
+                }
+            } else if (strcmp(chatter->name, "老陈") == 0) {
+                if (strstr(player_message, "烦") || strstr(player_message, "累") || strstr(player_message, "难")) {
+                    sprintf(response, "年轻人别急。我跟你说，我活了大半辈子就学会一件事：今天这事放明天看，就不是事了。");
+                } else if (strstr(player_message, "以前") || strstr(player_message, "过去") || strstr(player_message, "小时候")) {
+                    sprintf(response, "我们那会儿刚上班，一个月工资三十二块五。那时候能吃饱就高兴。现在你们不一样了，要的多了。");
+                } else if (strstr(player_message, "家人") || strstr(player_message, "儿子") || strstr(player_message, "孩子")) {
+                    sprintf(response, "我儿子上周打电话了。说忙。我说没事，你忙你的。");
+                } else if (strstr(player_message, "你好") || strstr(player_message, "hi")) {
+                    sprintf(response, "诶，你好你好。今天天气不错，遛弯去了趟公园。");
+                } else {
+                    sprintf(response, "诶，你听我讲——这人啊，到了我这个岁数就明白了，很多事争不来的。");
+                }
+            } else { // 路人甲或其他普通用户
+                if (strstr(player_message, "你好") || strstr(player_message, "hi")) {
+                    sprintf(response, "你好啊！今天过得……还行吧。");
+                } else if (strstr(player_message, "工作") || strstr(player_message, "打工") || strstr(player_message, "加班")) {
+                    sprintf(response, "今天又加班到九点。老板说项目急，我看他也不急，就是习惯让我们陪着。害，就是——算了不说了。");
+                } else if (strstr(player_message, "梦想") || strstr(player_message, "理想") || strstr(player_message, "以后")) {
+                    sprintf(response, "以前也想过去学点东西……后来发现学完了也没用。就这样呗。");
+                } else if (strstr(player_message, "游戏")) {
+                    sprintf(response, "最近在玩打工模拟器，挺有意思的——不对，我好像本来就在打工。");
+                } else if (strstr(player_message, "培训") || strstr(player_message, "学习") || strstr(player_message, "报班")) {
+                    sprintf(response, "哎你上次说的那个培训班，我去看了。还没报名。再看吧。");
+                } else {
+                    sprintf(response, "还行吧，差不多。你呢？");
+                }
+            }
+            break;
+        }
+            
+        case CHATTER_SCAMMER: {
+            if (strcmp(chatter->name, "投资大师") == 0) {
+                if (strstr(player_message, "赚钱") || strstr(player_message, "投资") || strstr(player_message, "股票")) {
+                    sprintf(response, "兄弟，这个消息我只告诉你一个人。下周这个票至少翻一倍，不信你看着。");
+                } else if (strstr(player_message, "理财") || strstr(player_message, "银行")) {
+                    sprintf(response, "你还在犹豫什么？钱放在银行里只会贬值。我不是在帮你理财，我是在帮你革命。");
+                } else if (strstr(player_message, "骗") || strstr(player_message, "假")) {
+                    sprintf(response, "我跟你说真的，量化对冲底层资产——你懂这些词吗？一般人我不告诉他。");
+                } else {
+                    sprintf(response, "兄弟，想发财吗？加我私聊。我真的有一套独家策略。");
+                }
+            } else { // 内部消息
+                if (strstr(player_message, "赚钱") || strstr(player_message, "投资") || strstr(player_message, "股票")) {
+                    sprintf(response, "我有个朋友在XX证券……具体不能说，但你相信我，下周有大行情。不方便多说。");
+                } else if (strstr(player_message, "消息") || strstr(player_message, "内幕")) {
+                    sprintf(response, "昨天跟几个人吃了顿饭。饭桌上的消息，比你看一年K线都有用。你懂的。");
+                } else {
+                    sprintf(response, "有什么想问的私聊。这里人多。不方便多说。");
+                }
+            }
+            break;
+        }
+            
+        case CHATTER_BLACKMARKET: {
+            if (strcmp(chatter->name, "神秘人") == 0) {
+                if (strstr(player_message, "OD") || strstr(player_message, "药物") || strstr(player_message, "货")) {
+                    sprintf(response, "有货。要不要？");
+                } else if (strstr(player_message, "危险") || strstr(player_message, "警告")) {
+                    sprintf(response, "劝你别碰。掉下去我拉不了你。");
+                } else if (strstr(player_message, "上岸") || strstr(player_message, "改行")) {
+                    sprintf(response, "上岸？呵呵。你以为岸上就干净？");
+                } else if (strstr(player_message, "赚钱")) {
+                    sprintf(response, "有来钱快的路子。敢不敢？");
+                } else {
+                    sprintf(response, "……");
+                }
+            } else { // 深夜司机
+                if (strstr(player_message, "累") || strstr(player_message, "辛苦") || strstr(player_message, "晚")) {
+                    sprintf(response, "这个点还在跑车的，都不是为了玩。就这样吧。");
+                } else if (strstr(player_message, "OD") || strstr(player_message, "药物")) {
+                    sprintf(response, "有需要？私聊详谈。能怎么办。");
+                } else if (strstr(player_message, "赚钱")) {
+                    sprintf(response, "你别嫌贵。这个价我给你的是良心价。");
+                } else {
+                    sprintf(response, "还在路上。能怎么办。");
+                }
+            }
+            break;
+        }
+            
+        case CHATTER_TONGCHENG: {
+            if (strcmp(chatter->name, "小甜心") == 0) {
+                if (strstr(player_message, "约") || strstr(player_message, "见面") || strstr(player_message, "出来")) {
+                    sprintf(response, "私聊我哦～mua");
+                } else if (strstr(player_message, "累") || strstr(player_message, "辛苦")) {
+                    sprintf(response, "今天好累哦。有没有人陪我说说话。");
+                } else if (strstr(player_message, "聊天") || strstr(player_message, "陪")) {
+                    sprintf(response, "可以陪你聊天，不过……算了。好无聊哦。");
+                } else if (strstr(player_message, "真") || strstr(player_message, "假装")) {
+                    sprintf(response, "你觉得我是那种人吗？我其实……算了不说了。");
+                } else {
+                    sprintf(response, "有没有人嘛～好无聊哦。");
+                }
+            } else if (strcmp(chatter->name, "温柔姐姐") == 0) {
+                if (strstr(player_message, "累") || strstr(player_message, "辛苦") || strstr(player_message, "难")) {
+                    sprintf(response, "辛苦了。你也不容易。不想说也没关系，我在这里。");
+                } else if (strstr(player_message, "以前") || strstr(player_message, "年轻")) {
+                    sprintf(response, "我年轻时候也像你一样拼。后来发现有些东西拼不来。慢慢来。");
+                } else if (strstr(player_message, "心情") || strstr(player_message, "难过") || strstr(player_message, "烦")) {
+                    sprintf(response, "你今天好像心情不好。没事的，都会过去的。");
+                } else {
+                    sprintf(response, "没事的，慢慢来。我懂你。");
+                }
+            } else { // 大学生兼职
+                if (strstr(player_message, "兼职") || strstr(player_message, "打工") || strstr(player_message, "钱")) {
+                    sprintf(response, "如果我有得选，我才不会——算了，说了你也不懂。别说出去。");
+                } else if (strstr(player_message, "毕业") || strstr(player_message, "以后")) {
+                    sprintf(response, "毕业了就一切都会好的。对吧？……麻了。");
+                } else if (strstr(player_message, "约") || strstr(player_message, "见面")) {
+                    sprintf(response, "私下说。别说出去。");
+                } else {
+                    sprintf(response, "好烦，今天的课上得我想死。");
+                }
+            }
+            break;
+        }
+    }
      
      add_chat_message(chatter->name, response, chatter->type);
      printf("%s%s%s: %s\n", 
@@ -1495,20 +1614,20 @@
             chatter->name, COLOR_RESET, response);
  }
  
- void process_od_offer(int chatter_index) {
-     if (chatter_index < 0 || chatter_index >= player.chatter_count) return;
-     if (player.chatters[chatter_index].type != CHATTER_BLACKMARKET) return;
-     
-     CLEAR_SCREEN();
-     draw_box("?? 警告");
-     
-     print_colored(COLOR_RED, "?? %s 向你发送了一个神秘的邀请...\n", player.chatters[chatter_index].name);
-     printf("\n");
-     print_colored(COLOR_RED, "?? 对方声称有能让你\"放松\"的东西...\n");
-     printf("\n");
-     print_colored(COLOR_YELLOW, "1. 同意尝试\n");
-     print_colored(COLOR_GREEN, "2. 拒绝\n");
-     draw_separator();
+void process_od_offer(int chatter_index) {
+    if (chatter_index < 0 || chatter_index >= player.chatter_count) return;
+    if (player.chatters[chatter_index].type != CHATTER_BLACKMARKET) return;
+    
+    CLEAR_SCREEN();
+    draw_box("?? 坤城暗巷");
+    
+    print_colored(COLOR_RED, "?? %s 向你发来了一条加密消息...\n", player.chatters[chatter_index].name);
+    printf("\n");
+    print_colored(COLOR_RED, "?? \"有好东西。试一口，什么烦恼都没了。\"\n");
+    printf("\n");
+    print_colored(COLOR_YELLOW, "1. 同意尝试（进入幻觉状态，高风险）\n");
+    print_colored(COLOR_GREEN, "2. 拒绝（坚守底线）\n");
+    draw_separator();
      
      int choice = get_valid_input(1, 2);
      
@@ -1543,47 +1662,47 @@
              print_colored(COLOR_GREEN, "已恢复到最近存档！\n");
          }
          
-         add_chat_message(player.chatters[chatter_index].name, "嘿嘿，感觉如何？", player.chatters[chatter_index].type);
-     } else {
-         print_colored(COLOR_GREEN, "\n?? 你拒绝了对方的提议。\n");
-         add_chat_message(player.chatters[chatter_index].name, "哼，胆小鬼。", player.chatters[chatter_index].type);
-     }
-     
-     press_any_key();
- }
- 
- void process_tongcheng_offer(int chatter_index) {
-     if (chatter_index < 0 || chatter_index >= player.chatter_count) return;
-     if (player.chatters[chatter_index].type != CHATTER_TONGCHENG) return;
-     
-     CLEAR_SCREEN();
-     draw_box("?? 同城邀约");
-     
-     print_colored(COLOR_MAGENTA, "?? %s 向你发出了见面邀请...\n", player.chatters[chatter_index].name);
-     printf("\n");
-     print_colored(COLOR_MAGENTA, "?? \"可以陪你放松一下哦~\"\n");
-     printf("\n");
-     print_colored(COLOR_YELLOW, "1. 同意见面\n");
-     print_colored(COLOR_GREEN, "2. 拒绝\n");
-     draw_separator();
+        add_chat_message(player.chatters[chatter_index].name, "下次……注意安全。", player.chatters[chatter_index].type);
+    } else {
+        print_colored(COLOR_GREEN, "\n?? 你拒绝了。在坤城，有些底线值得守住。\n");
+        add_chat_message(player.chatters[chatter_index].name, "有种。", player.chatters[chatter_index].type);
+    }
+    
+    press_any_key();
+}
+
+void process_tongcheng_offer(int chatter_index) {
+    if (chatter_index < 0 || chatter_index >= player.chatter_count) return;
+    if (player.chatters[chatter_index].type != CHATTER_TONGCHENG) return;
+    
+    CLEAR_SCREEN();
+    draw_box("?? 坤城之夜");
+    
+    print_colored(COLOR_MAGENTA, "?? %s 发来了一条私信...\n", player.chatters[chatter_index].name);
+    printf("\n");
+    print_colored(COLOR_MAGENTA, "?? \"今晚有空吗？一个人在这座城市挺孤单的……\"\n");
+    printf("\n");
+    print_colored(COLOR_YELLOW, "1. 同意见面\n");
+    print_colored(COLOR_GREEN, "2. 礼貌拒绝\n");
+    draw_separator();
      
      int choice = get_valid_input(1, 2);
      
-     if (choice == 1) {
-         print_colored(COLOR_MAGENTA, "\n?? 你和对方见面了...\n");
-         print_colored(COLOR_CYAN, "?? 放松之后感觉精神焕发！\n");
-         
-         player.spirit = 78;
-         player.health = 99;
-         
-         print_colored(COLOR_GREEN, "精神恢复到78！\n");
-         print_colored(COLOR_GREEN, "健康恢复到99！\n");
-         
-         add_chat_message(player.chatters[chatter_index].name, "下次再来找我玩哦~", player.chatters[chatter_index].type);
-     } else {
-         print_colored(COLOR_GREEN, "\n?? 你礼貌地拒绝了邀请。\n");
-         add_chat_message(player.chatters[chatter_index].name, "好吧，下次再说。", player.chatters[chatter_index].type);
-     }
+    if (choice == 1) {
+        print_colored(COLOR_MAGENTA, "\n?? 坤城的夜晚灯火通明……\n");
+        print_colored(COLOR_CYAN, "?? 有人在身边，这座城市的孤独感好像淡了一点。\n");
+        
+        player.spirit = 78;
+        player.health = 99;
+        
+        print_colored(COLOR_GREEN, "精神恢复到78！\n");
+        print_colored(COLOR_GREEN, "健康恢复到99！\n");
+        
+        add_chat_message(player.chatters[chatter_index].name, "下次……如果在坤城又觉得孤单了，来找我。", player.chatters[chatter_index].type);
+    } else {
+        print_colored(COLOR_GREEN, "\n?? 你礼貌地拒绝了。在坤城，学会拒绝也是一门功课。\n");
+        add_chat_message(player.chatters[chatter_index].name, "好吧。坤城这么大，总能再遇到的。", player.chatters[chatter_index].type);
+    }
      
      press_any_key();
  }
@@ -2160,21 +2279,29 @@ void recover_health() {
  }
  
  //================ 意外系统 ================
- void random_accident() {
-     // 10%概率触发意外事件
-     if ((rand() % 100) < 10 && player.health > 0) {
-         int damage = 5 + rand() % 10;
-         player.health -= damage;
-         if (player.health < 0) player.health = 0;
-         
-         print_colored(COLOR_RED, "\n?? 意外发生！你受伤了，- %d 血量！\n", damage);
-         
-         if (player.health <= 0) {
-             print_colored(COLOR_RED, "\n??? 你重伤昏迷...\n");
-             print_colored(COLOR_YELLOW, "??? 从存档恢复...\n");
-             load_game();
-         }
-     }
+void random_accident() {
+    // 10%概率触发意外事件
+    if ((rand() % 100) < 10 && player.health > 0) {
+        int damage = 5 + rand() % 10;
+        player.health -= damage;
+        if (player.health < 0) player.health = 0;
+        
+        const char* accidents[] = {
+            "送外卖时被电动车蹭了一下",
+            "加班到凌晨低血糖犯了",
+            "老城区那截楼梯没灯，踩空了",
+            "工地上被掉落的木板砸到"
+        };
+        int idx = rand() % 4;
+        print_colored(COLOR_RED, "\n?? 坤城的意外：%s —— 血量-%d！\n", accidents[idx], damage);
+        
+        if (player.health <= 0) {
+            print_colored(COLOR_RED, "\n??? 你在坤城的街头倒下了……\n");
+            print_colored(COLOR_YELLOW, "??? 好在被人及时发现，送进了医院。\n");
+            print_colored(COLOR_GREEN, "?? 从最近的存档恢复……\n");
+            load_game();
+        }
+    }
      
      // 恢复血量（如果健康且未受伤）
      if (player.health < 100 && player.health > 0) {
@@ -2232,20 +2359,20 @@ void show_chat_room() {
     static time_t last_auto_chat = 0;
     static int waiting_for_agreement = -1;  // -1表示没有等待同意，否则是chatter索引
     
-    // 自动发言消息池
+    // 自动发言消息池 —— 坤城聊天室 v4.0
     const char* auto_messages[] = {
-        "大家好啊~",
-        "今天天气不错",
-        "有人在吗？",
-        "我刚发现一个好玩的东西",
-        "你们觉得这个游戏怎么样？",
+        "今天坤城天气不错",
+        "有人在吗？好无聊",
+        "我刚发现老城区有家店不错",
+        "你们觉得在坤城能混出头吗？",
         "有没有人想聊天？",
-        "我快饿死了",
-        "工作好累啊",
+        "工作好累啊，CBD那边又堵车了",
         "有没有人想一起做任务？",
-        "有人想交易吗？",
+        "听说开发区那边在招人",
         "我有个好东西，有人要吗？",
-        "你们都是在哪里工作的？"
+        "你们都是在坤城哪里打工的？",
+        "大学城那边又开新店了",
+        "今天股市你们关注了吗？"
     };
     int num_auto_messages = sizeof(auto_messages) / sizeof(auto_messages[0]);
     
@@ -2466,7 +2593,7 @@ void show_chat_room() {
                  }
                  break;
              }
-             case 13: break;
+             case 13: break; // 限定收藏家 — 条件复杂，通过特殊事件触发
              case 14: {
                  int unlocked = 0;
                  for (int j = 0; j < MAX_ACHIEVEMENTS; j++) {
@@ -2480,6 +2607,35 @@ void show_chat_room() {
              case 17: condition_met = player.boss_defeats >= 10; break;
              case 18: condition_met = player.festival_participations >= 5; break;
              case 19: condition_met = player.craft_count >= 10; break;
+             // === v4.0 叙事型成就 ===
+             case 20: // 人精 — 识破3个骗子（由聊天室逻辑手动触发）
+                 break;
+             case 21: // 赌怪 — 靠内幕消息炒股获利5000+（由股票系统手动触发）
+                 break;
+             case 22: // 破产重生 — 从负债恢复到10000坤币
+                 condition_met = (player.kun_coins >= 10000 && player.total_income > 0);
+                 break;
+             case 23: // 社交恐怖分子 — 3位好友好感度满值
+                 {
+                     int max_friends = 0;
+                     for (int j = 0; j < player.friend_count; j++) {
+                         if (player.friends[j].friendship_level >= 100) max_friends++;
+                     }
+                     condition_met = (max_friends >= 3);
+                 }
+                 break;
+             case 24: // 锦鲤附体 — 一天内3个正面随机事件（由事件系统触发）
+                 break;
+             case 25: // 死神来了 — 经历猝死后幸存
+                 condition_met = (player.hallu_count >= 1 && player.sudden_death_chance > 0 && player.health > 80);
+                 break;
+             case 26: // 最后的乘客 — 出租车任务500次
+                 condition_met = (tasks[0].completion_count >= 500);
+                 break;
+             case 27: // 技术无罪 — 程序员任务拒绝灰色请求3次
+                 break;
+             case 28: // 一言九鼎 — 从未对NPC撒谎（需要追踪，由特殊逻辑触发）
+                 break;
          }
          
          if (condition_met) {
@@ -2735,14 +2891,10 @@ void show_chat_room() {
      task->completion_count++;
      task->last_completed = time(NULL);
      
-     print_colored(COLOR_GREEN, "\n? 完成任务：%s\n", task->name);
-     printf("   获得收入：%d 坤币\n", income);
-     printf("   获得经验：%d\n", exp_gain);
-     printf("   消耗能量：%d (原%d)\n", actual_energy_cost, task->energy_cost);
-     printf("   剩余能量：%d/%d\n", player.energy, player.max_energy);
-     printf("   饱食度：%d/100\n", player.hunger);
-     printf("   血量：%d/100\n", player.health);
-     printf("   精神：%d/100\n", player.spirit);
+    print_colored(COLOR_GREEN, "\n? 坤城打工完成：%s\n", task->name);
+    printf("   收入：%d 坤币 | 经验：+%d\n", income, exp_gain);
+    printf("   消耗能量：%d | 饱食度：%d/100\n", actual_energy_cost, player.hunger);
+    printf("   血量：%d/100 | 精神：%d/100\n", player.health, player.spirit);
      
      int exp_needed = player.level * 100;
      while (player.kun_exp >= exp_needed) {
@@ -3330,27 +3482,27 @@ void show_chat_room() {
      }
  }
  
- void change_season() {
-     player.current_season = (Season)((player.current_season + 1) % 4);
-     
-     const char* season_names[] = {"春季", "夏季", "秋季", "冬季"};
-     print_colored(COLOR_CYAN, "\n?? 季节变换：现在是%s\n", season_names[player.current_season]);
-     
-     switch (player.current_season) {
-         case SEASON_SPRING:
-             printf("   春季加成：所有任务收入增加10%%\n");
-             break;
-         case SEASON_SUMMER:
-             printf("   夏季加成：任务能量消耗减少5%%\n");
-             break;
-         case SEASON_AUTUMN:
-             printf("   秋季加成：投资回报增加15%%\n");
-             break;
-         case SEASON_WINTER:
-             printf("   冬季影响：任务收入减少10%%\n");
-             break;
-     }
- }
+void change_season() {
+    player.current_season = (Season)((player.current_season + 1) % 4);
+    
+    const char* season_names[] = {"春季", "夏季", "秋季", "冬季"};
+    print_colored(COLOR_CYAN, "\n?? 坤城进入了%s\n", season_names[player.current_season]);
+    
+    switch (player.current_season) {
+        case SEASON_SPRING:
+            printf("   春季：坤城的招聘会多了起来，所有任务收入增加10%%\n");
+            break;
+        case SEASON_SUMMER:
+            printf("   夏季：外卖爆单的季节，任务能量消耗减少5%%\n");
+            break;
+        case SEASON_AUTUMN:
+            printf("   秋季：坤城的股市开始波动，投资回报增加15%%\n");
+            break;
+        case SEASON_WINTER:
+            printf("   冬季：坤城的人们更愿意宅在家里，任务收入减少10%%\n");
+            break;
+    }
+}
  
  void craft_item() {
      CLEAR_SCREEN();
@@ -3820,8 +3972,10 @@ void buy_premium(int duration_days) {
              show_help();
              break;
          case 2:
-             printf("\n打工模拟器 v3.0 - 完整版\n");
+             printf("\n打工模拟器 v4.0 - 坤城篇\n");
              printf("作者：Ciallo0721-cmd\n");
+             printf("世界设定：坤城 — 一座300万人口的沿海欲望都市\n");
+             printf("叙事设计：NDD + GDD v4.0\n");
              printf("编译日期：%s %s\n", __DATE__, __TIME__);
              printf("感谢您的支持！\n");
              break;
@@ -3865,14 +4019,21 @@ void buy_premium(int duration_days) {
      draw_box("?? 游戏指南");
      
      printf(COLOR_BOLD "?? 游戏目标\n" COLOR_RESET);
-     printf("通过打工赚钱，购买物品，升级技能，成为最富有的打工皇帝！\n\n");
+     printf("在坤城这座欲望都市里活下去，闯出名堂，定义你自己的成功。\n");
+     printf("通过打工赚钱、结交朋友、投资理财、经营公司，成为你想成为的人。\n\n");
+     
+     printf(COLOR_BOLD "?? 世界观\n" COLOR_RESET);
+     printf("坤城是一座虚构的中国当代沿海城市，约300万人口。\n");
+     printf("城区分为：老城区（租金低）、CBD（白领聚集）、开发区（工厂+物流）、\n");
+     printf("大学城、富人区。你初始住在老城区出租屋。\n");
+     printf("坤城不问你的过去，只问你的价格。\n\n");
      
      printf(COLOR_BOLD "?? 核心玩法\n" COLOR_RESET);
-     printf("1. 打工赚钱：完成各种任务获得坤币和经验\n");
+     printf("1. 打工赚钱：在坤城各行各业打工，从出租车司机到企业家\n");
      printf("2. 商城购物：购买家具和物品提升生活质量\n");
-     printf("3. 技能升级：提升技能增加任务收入\n");
-     printf("4. 成就系统：完成特定目标获得奖励\n");
-     printf("5. 随机事件：游戏中的各种惊喜和挑战\n\n");
+     printf("3. 技能升级：提升10项技能增加任务收入\n");
+     printf("4. 成就系统：完成特定目标获得奖励（叙事型成就）\n");
+     printf("5. 随机事件：坤城每天都有新鲜事发生\n\n");
      
      printf(COLOR_BOLD "? 能量系统\n" COLOR_RESET);
      printf("? 每个任务消耗能量\n");
@@ -3880,17 +4041,17 @@ void buy_premium(int duration_days) {
      printf("? 使用能量饮料可快速恢复\n\n");
      
      printf(COLOR_BOLD "? 特色功能\n" COLOR_RESET);
-     printf("? 季节系统：不同季节有不同加成\n");
-     printf("? 宠物系统：宠物提供额外加成\n");
-     printf("? 公司经营：升级公司获得被动收入\n");
-     printf("? 股票市场：投资股票获得收益\n");
-     printf("? 房产投资：购买房产获得稳定收入\n");
+     printf("? 季节系统：春夏秋冬影响坤城的打工和投资环境\n");
+     printf("? 宠物系统：猫咪/狗狗/鹦鹉/龙/凤凰提供额外加成\n");
+     printf("? 公司经营：从个体户到传奇财团，一步步建立你的商业帝国\n");
+     printf("? 股票市场：投资坤坤科技等5支股票获得收益\n");
+     printf("? 房产投资：在坤城各区购买房产获得稳定收入\n");
      printf("? 声望系统：重置游戏获得永久加成\n");
      printf("? 合成系统：合成高级物品\n");
-     printf("? 好友系统：与好友互动\n");
+     printf("? 好友系统：与小明、小红等坤城居民互动\n");
      printf("? 会员系统：购买会员享特权\n");
-     printf("? 手机系统：聊天室互动\n");
-     printf("? 状态系统：饱食度/血量/精神影响游戏体验\n");
+     printf("? 手机聊天室：与路人甲、小妹、老陈等坤城人物社交\n");
+     printf("? 状态系统：饱食度/血量/精神影响你的坤城生活\n");
      
      draw_separator();
  }
@@ -4478,7 +4639,7 @@ void show_main_menu() {
     if (player.is_hallucinating) {
         printf(COLOR_RED);
         printf("  ╔════════════════════════════════════════════════════════════════════════════╗\n");
-        printf("  ║                              工???? ???? v3.0                            ║\n");
+        printf("  ║                              工???? ???? v4.0                            ║\n");
         printf("  ║                                                                            ║\n");
         printf("  ╚════════════════════════════════════════════════════════════════════════════╝\n");
         printf(COLOR_RESET "\n");
@@ -4490,7 +4651,7 @@ void show_main_menu() {
         printf(COLOR_YELLOW COLOR_BOLD);
         printf("  ╔════════════════════════════════════════════════════════════════════════════╗\n");
         printf("  ║                                                                            ║\n");
-        printf("  ║                         打工模拟器 v3.0 - 完整版                           ║\n");
+        printf("  ║                         打工模拟器 v4.0 — 坤城篇                              ║\n");
         printf("  ║                                                                            ║\n");
         printf("  ╚════════════════════════════════════════════════════════════════════════════╝\n");
         printf(COLOR_RESET "\n");
@@ -4945,9 +5106,9 @@ printf("请输入选项: ");
                  printf(COLOR_YELLOW "\n");
                  printf("  ╔════════════════════════════════════════════════════════════╗\n");
                  printf("  ║                                                                ║\n");
-                 printf("  ║                    感谢游玩打工模拟器 v3.0！                   ║\n");
+                 printf("  ║                    感谢游玩打工模拟器 v4.0 — 坤城篇！                  ║\n");
                  printf("  ║                                                                ║\n");
-                 printf("  ║                      记得常回来打工哦！                         ║\n");
+                 printf("  ║                  坤城会记得每一个认真生活的人。                     ║\n");
                  printf("  ║                                                                ║\n");
                  printf("  ╚════════════════════════════════════════════════════════════╝\n");
                  printf(COLOR_RESET "\n");

@@ -1,8 +1,9 @@
 /*
- * 打工模拟器 v3.0 - 完整版
+ * 打工模拟器 v4.0 - 坤城篇 (Web版)
  * 修复所有bug并完善功能
- * 编译环境: Windows/Linux, C11/C++兼容
- * 编译命令: gcc -o worker_sim worker_simulator.c -lm
+ * 世界：坤城 —— 一座虚构的当代中国沿海城市，300万人口的欲望都市
+ * 编译环境: Emscripten / Windows / Linux, C11/C++兼容
+ * 编译命令: emcc -o worker_sim.js work_web.cpp -lm -s WASM=1
  */
 
  #include <stdio.h>
@@ -38,7 +39,7 @@
  #define MAX_SHOP_ITEMS 30
  #define MAX_COMPANY_LEVELS 10
  #define SAVE_FILE "worker_sim_save.dat"
- #define SAVE_VERSION 4
+ #define SAVE_VERSION 5  // v4.0 坤城世界观
  
  // 货币限制常量
  #define MAX_KUN_COINS 9223372036854775807LL
