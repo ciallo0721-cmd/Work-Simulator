@@ -1,2 +1,4 @@
 *.dat
 /.workbuddy
+__pycache__/
+修改器/__pycache__/
