@@ -1,10 +1,9 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-打工模拟器存档修改器 v2.3
-兼容 2026-07-04 重新编译版（MinGW GCC 9.2.0 32-bit）
-存档格式: [4字节版本号(int)] + [Player结构体]
-存档版本: v4 (结构体未变，完全兼容)
+打工模拟器存档修改器 v3.0
+适配文件夹结构存档 (v8)
+save/manifest.work + player/core.player + pets/*.pet + friends/*.chr + tasks.ts + inventory.bag + stats.dat + forbes.list
 """
 
 import struct
@@ -13,147 +12,110 @@ import sys
 import time
 from typing import Dict, Any, Optional
 
-# ==================== 结构体大小常量 (MinGW GCC 9.2.0 32-bit) ====================
-ACHIEVEMENT_SIZE = 280
-SKILL_SIZE = 156
-QUEST_SIZE = 288
-PET_SIZE = 56
-COMPANY_LEVEL_SIZE = 64
-INVENTORY_ITEM_SIZE = 52
-STOCK_SIZE = 68
-PROPERTY_SIZE = 104
-FRIEND_SIZE = 44
-CHAT_MESSAGE_SIZE = 240
-CHATTER_SIZE = 140
-PLAYER_SIZE = 36696
-FORBES_ENTRY_SIZE = 72
-FORBES_FILE = "forbes_ranking.dat"
-SAVE_VERSION = 4
-SAVE_HEADER_SIZE = 4
+# ==================== 存档路径常量 ====================
+SAVE_DIR = "save/"
+FORBES_FILE = os.path.join(SAVE_DIR, "forbes.list")
+SAVE_VERSION = 8
 
-# ==================== 字段偏移量 (相对于Player结构体起始, MinGW32) ====================
-OFFSETS = {
-    'player_name': 0,
+# ==================== 字段→文件映射 ====================
+# 用有序列表定义 core.player 中所有标量字段及其类型
+# engine-lead 写入 core.player 时的字段顺序
+CORE_PLAYER_FIELDS = [
+    ('player_name', '50s'),
+    ('kun_coins', 'q'),
+    ('kun_exp', 'i'),
+    ('level', 'i'),
+    ('energy', 'i'),
+    ('max_energy', 'i'),
+    ('last_login', 'q'),
+    ('furniture_count', 'i'),
+    ('is_billionaire', '?'),
+    ('active_event', 'i'),
+    ('event_end_time', 'q'),
+    ('consecutive_days', 'i'),
+    ('game_start_time', 'q'),
+    ('total_play_time', 'i'),
+    ('skill_points', 'i'),
+    ('pet_count', 'i'),
+    ('current_company_level', 'i'),
+    ('inventory_count', 'i'),
+    ('property_count', 'i'),
+    ('friend_count', 'i'),
+    ('chat_message_count', 'i'),
+    ('chatter_count', 'i'),
+    ('daily_task_completions', 'i'),
+    ('weekly_task_completions', 'i'),
+    ('lifetime_task_completions', 'i'),
+    ('total_income', 'q'),
+    ('total_expenses', 'q'),
+    ('current_season', 'i'),
+    ('day_count', 'i'),
+    ('prestige_level', 'i'),
+    ('prestige_points', 'i'),
+    ('has_premium', '?'),
+    ('premium_until', 'q'),
+    ('achievement_points', 'i'),
+    ('lottery_tickets', 'i'),
+    ('mystery_keys', 'i'),
+    ('boss_defeats', 'i'),
+    ('festival_participations', 'i'),
+    ('craft_count', 'i'),
+    ('daily_time_slots', 'i'),
+    ('max_time_slots', 'i'),
+    ('today_income', 'i'),
+    ('today_expenses', 'i'),
+    ('today_work_count', 'i'),
+    ('today_event_count', 'i'),
+    ('last_difficulty', 'i'),
+    ('day_ended', '?'),
+    ('rent_cost', 'i'),
+    ('living_cost', 'i'),
+    ('gray_requests_this_session', 'i'),
+    ('lied_to_npc', '?'),
+    ('hunger', 'i'),
+    ('health', 'i'),
+    ('spirit', 'i'),
+    ('is_hallucinating', '?'),
+    ('hallucination_end', 'q'),
+    ('sudden_death_chance', 'i'),
+    ('hallu_count', 'i'),
+    ('has_phone', '?'),
+    ('in_chat_room', '?'),
+    ('scammers_detected', 'i'),
+    ('insider_profit', 'i'),
+    ('daily_positive_events', 'i'),
+    ('gray_requests_refused', 'i'),
+    ('limited_items_bought', 'i'),
+    ('has_never_lied', '?'),
+    ('been_bankrupt', '?'),
+]
 
-    # 核心属性 (time_t=4字节)
-    'kun_coins': 56,
-    'kun_exp': 64,
-    'level': 68,
-    'energy': 72,
-    'max_energy': 76,
-    'last_login': 80,
-    'furniture': 84,
-    'furniture_count': 2584,
-    'is_billionaire': 2588,
-    'active_event': 2592,
-    'event_end_time': 2596,
-    'tasks_unlocked': 2600,
-    'achievements': 2616,
-    'consecutive_days': 11016,
-    'game_start_time': 11020,
-    'total_play_time': 11024,
-    'skill_points': 11028,
-    'skills': 11032,
-    'active_quests': 12592,
-    'pets': 15472,
-    'pet_count': 15752,
-    'company_levels': 15760,
-    'current_company_level': 16400,
-    'inventory': 16404,
-    'inventory_count': 21604,
-    'stocks': 21608,
-    'invested_stocks': 21948,
-    'properties': 21968,
-    'property_count': 23008,
-    'friends': 23012,
-    'friend_count': 23452,
-    'daily_task_completions': 23456,
-    'weekly_task_completions': 23460,
-    'lifetime_task_completions': 23464,
-    'total_income': 23472,
-    'total_expenses': 23480,
-    'current_season': 23488,
-    'day_count': 23492,
-    'prestige_level': 23496,
-    'prestige_points': 23500,
-    'has_premium': 23504,
-    'premium_until': 23508,
-    'achievement_points': 23512,
-    'lottery_tickets': 23516,
-    'mystery_keys': 23520,
-    'boss_defeats': 23524,
-    'festival_participations': 23528,
-    'craft_count': 23532,
-    'hunger': 23536,
-    'health': 23540,
-    'spirit': 23544,
-    'is_hallucinating': 23548,
-    'hallucination_end': 23552,
-    'sudden_death_chance': 23556,
-    'hallu_count': 23560,
-    'has_phone': 23564,
-    'in_chat_room': 23565,
-    'chat_history': 23568,
-    'chat_message_count': 35568,
-    'chatters': 35572,
-    'chatter_count': 36692,
-}
+# 构建 struct 格式和字段偏移表
+CORE_PLAYER_FMT = '<' + ''.join(t for _, t in CORE_PLAYER_FIELDS)
+CORE_PLAYER_STRUCT = struct.Struct(CORE_PLAYER_FMT)
+CORE_PLAYER_SIZE = CORE_PLAYER_STRUCT.size
 
-# ==================== 字段类型定义 ====================
-FIELD_TYPES = {
-    # 8字节字段
-    'kun_coins': 'q',
-    'total_income': 'q',
-    'total_expenses': 'q',
+# 从字段列表构建 {field: (file, offset, fmt)} 映射
+FIELD_MAP = {}
+_core_offset = 0
+for name, fmt in CORE_PLAYER_FIELDS:
+    FIELD_MAP[name] = ('player/core.player', _core_offset, fmt)
+    _core_offset += struct.calcsize('<' + fmt)
 
-    # 4字节字段 (time_t 现在是 4 字节!)
-    'kun_exp': 'i',
-    'level': 'i',
-    'energy': 'i',
-    'max_energy': 'i',
-    'last_login': 'i',
-    'furniture_count': 'i',
-    'active_event': 'i',
-    'event_end_time': 'i',
-    'consecutive_days': 'i',
-    'game_start_time': 'i',
-    'total_play_time': 'i',
-    'skill_points': 'i',
-    'current_company_level': 'i',
-    'inventory_count': 'i',
-    'property_count': 'i',
-    'friend_count': 'i',
-    'pet_count': 'i',
-    'daily_task_completions': 'i',
-    'weekly_task_completions': 'i',
-    'lifetime_task_completions': 'i',
-    'current_season': 'i',
-    'day_count': 'i',
-    'prestige_level': 'i',
-    'prestige_points': 'i',
-    'achievement_points': 'i',
-    'lottery_tickets': 'i',
-    'mystery_keys': 'i',
-    'boss_defeats': 'i',
-    'festival_participations': 'i',
-    'craft_count': 'i',
-    'hunger': 'i',
-    'health': 'i',
-    'spirit': 'i',
-    'sudden_death_chance': 'i',
-    'hallu_count': 'i',
-    'premium_until': 'i',
-    'hallucination_end': 'i',
-    'chat_message_count': 'i',
-    'chatter_count': 'i',
-    'has_phone': 'i',
-    'in_chat_room': 'i',
+# PET 结构体: name[30] + type(int) + level(int) + exp(int) + happiness(int) + hunger(int) + is_unlocked(?) + bonus_multiplier(f) + last_fed(q)
+PET_STRUCT = struct.Struct('<30s i i i i i ? f q')
+PET_SIZE = PET_STRUCT.size
 
-    # 1字节字段
-    'is_billionaire': '?',
-    'has_premium': '?',
-    'is_hallucinating': '?',
-}
+# FRIEND 结构体: name[30] + level(int) + is_online(?) + last_online(q) + friendship_level(f) + is_friend(?)
+FRIEND_STRUCT = struct.Struct('<30s i ? q f ?')
+FRIEND_SIZE = FRIEND_STRUCT.size
+
+# 福布斯条目: name[50] + coins(q) + level(i) + record_time(q) + is_active(?) + 1byte padding
+FORBES_ENTRY = struct.Struct('<50s q i q ?')
+FORBES_ENTRY_SIZE = FORBES_ENTRY.size
+
+# 字段类型定义（用于类型转换）
+FIELD_TYPES = {name: fmt for name, fmt in CORE_PLAYER_FIELDS}
 
 # ==================== 可读写的基本字段列表 ====================
 BASIC_FIELDS = [
@@ -190,263 +152,278 @@ BASIC_FIELDS = [
 
 
 class KunSaveEditor:
-    def __init__(self, save_file: str = "worker_sim_save.dat"):
-        self.save_file = save_file
-        self.data = None
-        self.version = None
+    def __init__(self):
+        # self.files: {相对路径: bytes} — 在内存中缓存所有存档文件
+        self.files: Dict[str, bytes] = {}
+        # self.values: {字段名: 值} — 解析后的标量字段
+        self.values: Dict[str, Any] = {}
+        self.version = 0
+        self.player_name = ""
 
-    def _player_offset(self, field: str) -> int:
-        """获取字段在存档文件中的绝对偏移量"""
-        if field not in OFFSETS:
-            raise ValueError(f"未知字段: {field}")
-        return SAVE_HEADER_SIZE + OFFSETS[field]
+    def _p(self, *parts: str) -> str:
+        """拼接存档目录下的路径"""
+        return os.path.join(SAVE_DIR, *parts)
+
+    def _read_file(self, path: str) -> Optional[bytes]:
+        """读取存档子文件，返回字节或 None"""
+        full = self._p(path)
+        if not os.path.exists(full):
+            return None
+        with open(full, 'rb') as f:
+            return f.read()
+
+    def _write_file(self, path: str, data: bytes) -> bool:
+        """写入存档子文件，自动创建目录"""
+        full = self._p(path)
+        os.makedirs(os.path.dirname(full), exist_ok=True)
+        with open(full, 'wb') as f:
+            f.write(data)
+        return True
 
     def load_save(self) -> bool:
-        """加载存档文件"""
-        if not os.path.exists(self.save_file):
-            print(f"错误: 存档文件 {self.save_file} 不存在")
+        """从 save/ 文件夹加载存档"""
+        if not os.path.exists(self._p("manifest.work")):
+            print(f"错误: 存档目录 {SAVE_DIR} 不存在或未找到 manifest.work")
             return False
 
         try:
-            with open(self.save_file, 'rb') as f:
-                self.data = bytearray(f.read())
-
-            if len(self.data) < SAVE_HEADER_SIZE:
-                print("错误: 存档文件损坏 (太小)")
+            # 1. 读取 manifest.work
+            raw = self._read_file("manifest.work")
+            if not raw or len(raw) < 48:
+                print("错误: manifest.work 损坏")
                 return False
+            ver, name_b, day_cnt, save_t = struct.unpack_from('<i 32s i q', raw, 0)
+            self.version = ver
+            self.player_name = name_b.rstrip(b'\0').decode('utf-8', errors='ignore')
 
-            self.version = struct.unpack('<i', self.data[:SAVE_HEADER_SIZE])[0]
-            expected_size = SAVE_HEADER_SIZE + PLAYER_SIZE
+            # 2. 读取 core.player → 解析全部标量字段
+            core_raw = self._read_file("player/core.player")
+            if core_raw and len(core_raw) >= CORE_PLAYER_SIZE:
+                vals = CORE_PLAYER_STRUCT.unpack_from(core_raw, 0)
+                for (name, _), val in zip(CORE_PLAYER_FIELDS, vals):
+                    if isinstance(val, bytes):
+                        val = val.rstrip(b'\0').decode('utf-8', errors='ignore')
+                    self.values[name] = val
+            else:
+                print("警告: core.player 缺失，使用默认值")
+                for name, fmt in CORE_PLAYER_FIELDS:
+                    if fmt == '50s':
+                        self.values[name] = self.player_name
+                    elif fmt == '?':
+                        self.values[name] = False
+                    elif fmt == 'q':
+                        self.values[name] = 0
+                    else:
+                        self.values[name] = 0
 
-            if len(self.data) < expected_size:
-                print(f"警告: 存档文件大小 ({len(self.data)}) 小于预期 ({expected_size})")
-                print("  可能是旧版本存档，部分字段可能无法读取")
+            # 3. 缓存所有文件到 self.files 供其他方法使用
+            for fname in ["tasks.ts", "inventory.bag", "stats.dat", "forbes.list"]:
+                data = self._read_file(fname)
+                if data:
+                    self.files[fname] = data
 
-            if self.version != SAVE_VERSION:
-                print(f"警告: 存档版本为 v{self.version}，当前为 v{SAVE_VERSION}")
-                if self.version == 3:
-                    print("  提示: v3存档可以继续使用，但新字段将使用默认值")
+            # 读取 pets/
+            pet_raw = self._read_file("pets/main.dat")
+            if pet_raw:
+                self.files["pets/main.dat"] = pet_raw
+                pet_count = self.values.get('pet_count', 0)
+                for i in range(min(pet_count, 5)):
+                    d = self._read_file(f"pets/{i}.pet")
+                    if d:
+                        self.files[f"pets/{i}.pet"] = d
 
-            print(f"成功加载存档，文件大小: {len(self.data)} 字节，版本: v{self.version}")
+            # 读取 friends/
+            fr_raw = self._read_file("friends/main.dat")
+            if fr_raw:
+                self.files["friends/main.dat"] = fr_raw
+                fr_count = self.values.get('friend_count', 0)
+                for i in range(min(fr_count, 10)):
+                    d = self._read_file(f"friends/{i}.chr")
+                    if d:
+                        self.files[f"friends/{i}.chr"] = d
+
+            print(f"已加载存档: {self.player_name} (v{self.version}), Day {self.values.get('day_count', 0)}")
             return True
         except Exception as e:
             print(f"加载存档失败: {e}")
+            import traceback
+            traceback.print_exc()
             return False
 
     def save_save(self) -> bool:
-        """保存修改后的存档"""
-        if self.data is None:
-            print("错误: 没有加载存档数据")
-            return False
-
+        """写回 save/ 文件夹"""
         try:
-            # 确保文件大小足够
-            expected_size = SAVE_HEADER_SIZE + PLAYER_SIZE
-            if len(self.data) < expected_size:
-                self.data.extend(b'\x00' * (expected_size - len(self.data)))
+            # manifest.work
+            name_b = self.player_name.encode('utf-8')[:31].ljust(32, b'\0')
+            manifest = struct.pack('<i 32s i q', SAVE_VERSION, name_b,
+                                   self.values.get('day_count', 0), int(time.time()))
+            self._write_file("manifest.work", manifest)
 
-            # 更新版本号
-            struct.pack_into('<i', self.data, 0, SAVE_VERSION)
+            # core.player
+            core_vals = []
+            for name, fmt in CORE_PLAYER_FIELDS:
+                v = self.values.get(name, 0)
+                if fmt == '50s':
+                    if isinstance(v, str):
+                        v = v.encode('utf-8')[:49].ljust(50, b'\0')
+                    elif v is None:
+                        v = b'\0' * 50
+                core_vals.append(v)
+            core_data = CORE_PLAYER_STRUCT.pack(*core_vals)
+            self._write_file("player/core.player", core_data)
 
-            # 备份原文件
-            if os.path.exists(self.save_file):
-                backup_file = self.save_file + '.bak'
-                with open(self.save_file, 'rb') as src, open(backup_file, 'wb') as dst:
-                    dst.write(src.read())
-                print(f"已创建备份: {backup_file}")
+            # pets/
+            for i in range(5):
+                key = f"pets/{i}.pet"
+                if key in self.files:
+                    self._write_file(key, self.files[key])
 
-            with open(self.save_file, 'wb') as f:
-                f.write(self.data)
+            # friends/
+            for i in range(10):
+                key = f"friends/{i}.chr"
+                if key in self.files:
+                    self._write_file(key, self.files[key])
 
-            print("存档已保存!")
+            # 其他文件
+            for fname in ["pets/main.dat", "friends/main.dat", "tasks.ts",
+                          "inventory.bag", "stats.dat", "forbes.list"]:
+                if fname in self.files:
+                    self._write_file(fname, self.files[fname])
+
+            print("  存档已保存! (文件夹结构)")
             return True
         except Exception as e:
             print(f"保存存档失败: {e}")
             return False
 
     def read_value(self, field: str) -> Optional[Any]:
-        """读取指定字段的值"""
-        if self.data is None:
-            print("错误: 请先加载存档")
-            return None
-
-        if field not in FIELD_TYPES:
+        """读取标量字段值"""
+        if field not in FIELD_MAP:
             print(f"错误: 不支持读取字段 {field}")
             return None
-
-        try:
-            offset = self._player_offset(field)
-            fmt = FIELD_TYPES[field]
-            
-            # 检查偏移量是否在数据范围内
-            if offset + struct.calcsize('<' + fmt) > len(self.data):
-                print(f"警告: 字段 {field} 超出数据范围，返回默认值")
-                return 0 if fmt != '?' else False
-            
-            value = struct.unpack_from('<' + fmt, self.data, offset)[0]
-            return value
-        except Exception as e:
-            print(f"读取字段 {field} 失败: {e}")
-            return None
+        return self.values.get(field)
 
     def write_value(self, field: str, value: Any) -> bool:
-        """写入指定字段的值"""
-        if self.data is None:
-            print("错误: 请先加载存档")
-            return False
-
-        if field not in FIELD_TYPES:
+        """写入标量字段值"""
+        if field not in FIELD_MAP:
             print(f"错误: 不支持写入字段 {field}")
             return False
 
-        try:
-            fmt = FIELD_TYPES[field]
+        _, _, fmt = FIELD_MAP[field]
+        # 类型转换
+        if fmt in ('?',):
+            if isinstance(value, str):
+                value = value.lower() in ['true', '1', 'yes', 'y']
+            else:
+                value = bool(value)
+        elif fmt == 'q':
+            if isinstance(value, str) and value.lower() == 'now':
+                value = int(time.time())
+            else:
+                value = int(value)
+        else:  # 'i'
+            if isinstance(value, str) and value.lower() == 'now':
+                value = int(time.time())
+            else:
+                value = int(value)
+            if field in ['hunger', 'health', 'spirit']:
+                if value < 0: value = 0
+                if value > 100: value = 100
 
-            # 类型转换
-            if fmt == '?':
-                if isinstance(value, str):
-                    value = value.lower() in ['true', '1', 'yes', 'y']
-                else:
-                    value = bool(value)
-            elif fmt == 'q':
-                if isinstance(value, str) and value.lower() == 'now':
-                    value = int(time.time())
-                else:
-                    value = int(value)
-            else:  # 'i'
-                if isinstance(value, str) and value.lower() == 'now':
-                    value = int(time.time())
-                else:
-                    value = int(value)
-                # 值域限制
-                if field in ['hunger', 'health', 'spirit']:
-                    if value < 0: value = 0
-                    if value > 100: value = 100
-
-            offset = self._player_offset(field)
-            
-            # 检查偏移量
-            if offset + struct.calcsize('<' + fmt) > len(self.data):
-                # 扩展数据
-                needed = offset + struct.calcsize('<' + fmt) - len(self.data)
-                self.data.extend(b'\x00' * needed)
-            
-            packed = struct.pack('<' + fmt, value)
-            self.data[offset:offset + len(packed)] = packed
-
-            print(f"成功设置 {field} = {value}")
-            return True
-        except Exception as e:
-            print(f"写入字段 {field} 失败: {e}")
-            return False
-
-    def read_furniture(self, index: int = 0) -> Optional[str]:
-        """读取家具名称"""
-        if index < 0 or index >= 50:
-            print("错误: 家具索引必须在 0-49 之间")
-            return None
-
-        offset = self._player_offset('furniture') + index * 50
-        try:
-            if offset + 50 > len(self.data):
-                return None
-            name_bytes = self.data[offset:offset + 50]
-            end = name_bytes.find(b'\0')
-            if end != -1:
-                name_bytes = name_bytes[:end]
-            return name_bytes.decode('utf-8', errors='ignore')
-        except Exception as e:
-            return None
-
-    def write_furniture(self, index: int, name: str) -> bool:
-        """写入家具名称"""
-        if index < 0 or index >= 50:
-            print("错误: 家具索引必须在 0-49 之间")
-            return False
-
-        offset = self._player_offset('furniture') + index * 50
-        try:
-            name_bytes = name.encode('utf-8')[:49]
-            if offset + 50 > len(self.data):
-                needed = offset + 50 - len(self.data)
-                self.data.extend(b'\x00' * needed)
-            self.data[offset:offset + len(name_bytes)] = name_bytes
-            self.data[offset + len(name_bytes):offset + 50] = b'\0' * (50 - len(name_bytes))
-            print(f"成功设置家具[{index}] = {name}")
-            return True
-        except Exception as e:
-            print(f"写入家具失败: {e}")
-            return False
-
-    def get_furniture_count(self) -> int:
-        """获取家具数量"""
-        count = self.read_value('furniture_count')
-        return count if count is not None else 0
+        self.values[field] = value
+        print(f"成功设置 {field} = {value}")
+        return True
 
     def read_player_name(self) -> Optional[str]:
-        """读取玩家名称"""
-        if self.data is None:
-            print("错误: 请先加载存档")
-            return None
-
-        try:
-            offset = self._player_offset('player_name')
-            if offset + 50 > len(self.data):
-                return "未知玩家"
-            name_bytes = self.data[offset:offset + 50]
-            end = name_bytes.find(b'\0')
-            if end != -1:
-                name_bytes = name_bytes[:end]
-            return name_bytes.decode('utf-8', errors='ignore')
-        except Exception as e:
-            print(f"读取玩家名称失败: {e}")
-            return None
+        return self.values.get('player_name', self.player_name)
 
     def write_player_name(self, name: str) -> bool:
-        """写入玩家名称"""
-        if self.data is None:
-            print("错误: 请先加载存档")
-            return False
+        if len(name) > 49:
+            name = name[:49]
+        self.values['player_name'] = name
+        self.player_name = name
+        print(f"成功设置玩家名称 = {name}")
+        return True
 
-        try:
-            offset = self._player_offset('player_name')
-            name_bytes = name.encode('utf-8')[:49]
-            if offset + 50 > len(self.data):
-                needed = offset + 50 - len(self.data)
-                self.data.extend(b'\x00' * needed)
-            self.data[offset:offset + len(name_bytes)] = name_bytes
-            self.data[offset + len(name_bytes):offset + 50] = b'\0' * (50 - len(name_bytes))
-            print(f"成功设置玩家名称 = {name}")
-            return True
-        except Exception as e:
-            print(f"写入玩家名称失败: {e}")
+    # ---------- 家具 ----------
+    _FURNITURE_OFFSET = 2600  # Player 结构体中家具数组起始的大致位置
+    _FURNITURE_ITEM_SIZE = 50
+    _FURNITURE_COUNT = 50
+
+    def read_furniture(self, index: int = 0) -> Optional[str]:
+        """从 core.player 的家具区域读取"""
+        if index < 0 or index >= self._FURNITURE_COUNT:
+            return None
+        if "player/core.player" not in self._cache_furniture:
+            self._load_furniture_cache()
+        cache = self._cache_furniture.get("player/core.player")
+        if not cache or len(cache) < self._FURNITURE_OFFSET + (index + 1) * self._FURNITURE_ITEM_SIZE:
+            return None
+        raw = cache[self._FURNITURE_OFFSET + index * self._FURNITURE_ITEM_SIZE:
+                    self._FURNITURE_OFFSET + (index + 1) * self._FURNITURE_ITEM_SIZE]
+        end = raw.find(b'\0')
+        if end != -1:
+            raw = raw[:end]
+        return raw.decode('utf-8', errors='ignore')
+
+    def _load_furniture_cache(self):
+        """从实际文件加载家具缓存"""
+        self._cache_furniture = {}
+        raw = self._read_file("player/core.player")
+        if raw:
+            self._cache_furniture["player/core.player"] = raw
+
+    def write_furniture(self, index: int, name: str) -> bool:
+        if index < 0 or index >= self._FURNITURE_COUNT:
             return False
+        if "player/core.player" not in self._cache_furniture:
+            self._load_furniture_cache()
+        if "player/core.player" not in self._cache_furniture:
+            self._cache_furniture["player/core.player"] = bytearray(37000)
+        cache = bytearray(self._cache_furniture["player/core.player"])
+        needed = self._FURNITURE_OFFSET + (index + 1) * self._FURNITURE_ITEM_SIZE
+        if len(cache) < needed:
+            cache.extend(b'\x00' * (needed - len(cache)))
+        name_bytes = name.encode('utf-8')[:49]
+        pos = self._FURNITURE_OFFSET + index * self._FURNITURE_ITEM_SIZE
+        cache[pos:pos + len(name_bytes)] = name_bytes
+        cache[pos + len(name_bytes):pos + self._FURNITURE_ITEM_SIZE] = b'\0' * (self._FURNITURE_ITEM_SIZE - len(name_bytes))
+        self._cache_furniture["player/core.player"] = bytes(cache)
+        self._write_file("player/core.player", bytes(cache))
+        print(f"成功设置家具[{index}] = {name}")
+        return True
+
+    def get_furniture_count(self) -> int:
+        return self.values.get('furniture_count', 0)
 
     def show_forbes_ranking(self):
         """显示福布斯排行榜"""
-        # 预设名人名单
         famous_names = {
             "马斯克", "比尔盖茨", "贝索斯", "巴菲特",
             "马云", "扎克伯格", "库克", "马化腾",
             "李嘉诚", "钟睒睒"
         }
 
-        if not os.path.exists(FORBES_FILE):
+        raw = self.files.get("forbes.list")
+        if not raw:
+            raw = self._read_file("forbes.list")
+        if not raw:
             print("\n  福布斯排行榜文件不存在！")
             return
 
         try:
-            with open(FORBES_FILE, 'rb') as f:
-                count = struct.unpack('<i', f.read(4))[0]
-                entries = []
-                for _ in range(min(count, 100)):
-                    entry_data = f.read(FORBES_ENTRY_SIZE)
-                    if len(entry_data) < FORBES_ENTRY_SIZE:
-                        break
-                    name = entry_data[:50].decode('utf-8', errors='ignore').rstrip('\0')
-                    coins = struct.unpack('<q', entry_data[50:58])[0]
-                    level = struct.unpack('<i', entry_data[58:62])[0]
-                    entries.append((name, coins, level))
+            count = struct.unpack('<i', raw[:4])[0]
+            entries = []
+            pos = 4
+            for _ in range(min(count, 100)):
+                if pos + FORBES_ENTRY_SIZE > len(raw):
+                    break
+                entry_data = raw[pos:pos + FORBES_ENTRY_SIZE]
+                pos += FORBES_ENTRY_SIZE
+                name = entry_data[:50].decode('utf-8', errors='ignore').rstrip('\0')
+                coins = struct.unpack('<q', entry_data[50:58])[0]
+                level = struct.unpack('<i', entry_data[58:62])[0]
+                entries.append((name, coins, level))
 
             print("\n" + "=" * 60)
             print("  福布斯坤币排行榜")
@@ -476,10 +453,6 @@ class KunSaveEditor:
 
     def update_forbes_ranking(self):
         """更新福布斯排行榜"""
-        if self.data is None:
-            print("错误: 请先加载存档")
-            return
-
         player_name = self.read_player_name()
         kun_coins = self.read_value('kun_coins')
         level = self.read_value('level')
@@ -490,17 +463,18 @@ class KunSaveEditor:
 
         # 读取现有排行榜
         entries = []
-        if os.path.exists(FORBES_FILE):
+        raw = self.files.get("forbes.list") or self._read_file("forbes.list")
+        if raw and len(raw) >= 4:
             try:
-                with open(FORBES_FILE, 'rb') as f:
-                    count = struct.unpack('<i', f.read(4))[0]
-                    for _ in range(min(count, 100)):
-                        entry_data = f.read(FORBES_ENTRY_SIZE)
-                        if len(entry_data) < FORBES_ENTRY_SIZE:
-                            break
-                        entries.append(entry_data)
+                count = struct.unpack('<i', raw[:4])[0]
+                pos = 4
+                for _ in range(min(count, 100)):
+                    if pos + FORBES_ENTRY_SIZE > len(raw):
+                        break
+                    entries.append(raw[pos:pos + FORBES_ENTRY_SIZE])
+                    pos += FORBES_ENTRY_SIZE
             except:
-                pass
+                entries = []
 
         # 查找并更新或添加玩家记录
         new_entry = player_name.encode('utf-8')[:50].ljust(50, b'\0')
@@ -508,7 +482,6 @@ class KunSaveEditor:
         new_entry += struct.pack('<i', level)
         new_entry += struct.pack('<q', int(time.time()))
         new_entry += struct.pack('<?', True)
-        new_entry += b'\x00'  # padding
 
         found = False
         for i, entry in enumerate(entries):
@@ -525,13 +498,14 @@ class KunSaveEditor:
         def get_coins(entry):
             return struct.unpack('<q', entry[50:58])[0]
         entries.sort(key=get_coins, reverse=True)
-        entries = entries[:100]  # 最多保留100条
+        entries = entries[:100]
 
-        # 写入文件
-        with open(FORBES_FILE, 'wb') as f:
-            f.write(struct.pack('<i', len(entries)))
-            for entry in entries:
-                f.write(entry)
+        # 写入
+        result = struct.pack('<i', len(entries))
+        for entry in entries:
+            result += entry
+        self.files["forbes.list"] = result
+        self._write_file("forbes.list", result)
 
         print(f"\n  福布斯排行榜已更新！")
         print(f"  玩家: {player_name}")
@@ -541,7 +515,7 @@ class KunSaveEditor:
 
     def fix_menu(self):
         """存档修复主菜单"""
-        if self.data is None:
+        if not self.values:
             print("错误: 请先加载存档")
             return
 
@@ -564,17 +538,25 @@ class KunSaveEditor:
             print("  无效选择")
 
     def _reset_empty(self):
-        """恢复成空存档 - 全部填零"""
+        """恢复成空存档 - 清零所有字段"""
         print("\n  ⚠️ 此操作将清空所有存档数据!")
         confirm = input("  确认清空? (输入 YES 确认): ").strip()
         if confirm != "YES":
             print("  已取消")
             return
 
-        self.data = bytearray(SAVE_HEADER_SIZE + PLAYER_SIZE)
-        struct.pack_into('<i', self.data, 0, SAVE_VERSION)
+        for name, fmt in CORE_PLAYER_FIELDS:
+            if fmt == '50s':
+                self.values[name] = ''
+            elif fmt == '?':
+                self.values[name] = False
+            elif fmt == 'q':
+                self.values[name] = 0
+            else:
+                self.values[name] = 0
+        self.files = {}
         self.version = SAVE_VERSION
-        print("  ✅ 已恢复为空存档 (版本号保留)")
+        print("  ✅ 已清空所有数据")
         self.save_save()
 
     def _reset_default(self):
@@ -585,11 +567,6 @@ class KunSaveEditor:
             print("  已取消")
             return
 
-        self.data = bytearray(SAVE_HEADER_SIZE + PLAYER_SIZE)
-        struct.pack_into('<i', self.data, 0, SAVE_VERSION)
-        self.version = SAVE_VERSION
-
-        # 默认值
         defaults = {
             'player_name': '打工人',
             'kun_coins': 100,
@@ -605,12 +582,15 @@ class KunSaveEditor:
             'has_phone': True,
             'in_chat_room': False,
         }
-
-        for field, val in defaults.items():
-            if field == 'player_name':
-                self.write_player_name(val)
+        for name, fmt in CORE_PLAYER_FIELDS:
+            if fmt == '50s':
+                self.values[name] = defaults.get(name, '')
+            elif fmt == '?':
+                self.values[name] = defaults.get(name, False)
+            elif fmt == 'q':
+                self.values[name] = defaults.get(name, 0)
             else:
-                self.write_value(field, val)
+                self.values[name] = defaults.get(name, 0)
 
         print("  ✅ 已恢复为默认存档")
         self.save_save()
@@ -641,17 +621,8 @@ class KunSaveEditor:
 
         # 版本号
         if self.version != SAVE_VERSION:
-            struct.pack_into('<i', self.data, 0, SAVE_VERSION)
-            print(f"  [修复] 版本号 v{self.version} -> v{SAVE_VERSION}")
             self.version = SAVE_VERSION
-            fixes += 1
-
-        # 文件大小
-        expected_size = SAVE_HEADER_SIZE + PLAYER_SIZE
-        if len(self.data) < expected_size:
-            shortage = expected_size - len(self.data)
-            self.data.extend(b'\x00' * shortage)
-            print(f"  [修复] 文件过小，已扩展 +{shortage} 字节")
+            print(f"  [修复] 版本号 -> v{SAVE_VERSION}")
             fixes += 1
 
         # 布尔值
@@ -709,26 +680,13 @@ class KunSaveEditor:
         cap_limits = {
             'furniture_count': 50, 'inventory_count': 100, 'pet_count': 5,
             'friend_count': 10, 'property_count': 10, 'chat_message_count': 50,
-            'chatter_count': 8, 'task_completions': 999999
+            'chatter_count': 8
         }
         for field, limit in cap_limits.items():
             val = self.read_value(field)
             if val is not None and (val < 0 or val > limit):
                 self.write_value(field, 0)
                 print(f"  [修复] {field}({val}) 超出范围，已清零")
-                fixes += 1
-
-        # 家具数量校验
-        fc = self.read_value('furniture_count')
-        if fc is not None and fc > 0:
-            actual = 0
-            for i in range(50):
-                name = self.read_furniture(i)
-                if name and name.strip():
-                    actual = i + 1
-            if fc != actual:
-                self.write_value('furniture_count', actual)
-                print(f"  [修复] 家具数量({fc}→{actual})与实际不符")
                 fixes += 1
 
         # 玩家名称
@@ -753,19 +711,8 @@ class KunSaveEditor:
             return
 
         print("\n  🔧 正在进行高级修复...")
-
-        # 确保基本结构
-        expected_size = SAVE_HEADER_SIZE + PLAYER_SIZE
-        if len(self.data) < expected_size:
-            old = len(self.data)
-            self.data.extend(b'\x00' * (expected_size - len(self.data)))
-            print(f"  [重建] 数据扩展 {old} -> {expected_size}")
-
-        # 修复版本号
-        struct.pack_into('<i', self.data, 0, SAVE_VERSION)
         self.version = SAVE_VERSION
 
-        # 逐个字段安全读取，超出范围的用默认值
         safe_fields = {
             'level': 1, 'kun_coins': 100, 'kun_exp': 0,
             'energy': 100, 'max_energy': 100, 'hunger': 100,
@@ -782,14 +729,12 @@ class KunSaveEditor:
                 print(f"  [重建] {field} -> {default}")
                 fixed += 1
 
-        # 重建玩家名称
         name = self.read_player_name()
         if name is None or len(name.strip()) == 0:
             self.write_player_name("打工人")
             print(f"  [重建] 玩家名称 -> 打工人")
             fixed += 1
 
-        # 重置所有计数器
         reset_counters = ['furniture_count', 'inventory_count', 'pet_count',
                           'friend_count', 'property_count', 'chat_message_count',
                           'chatter_count', 'craft_count', 'boss_defeats',
@@ -908,11 +853,6 @@ class KunSaveEditor:
             print(f"  ✅ 背包物品数量已清零")
         else:
             print(f"  背包物品数量: {count}")
-        # 清零物品数据
-        inv_offset = self._player_offset('inventory')
-        if inv_offset + 100 * INVENTORY_ITEM_SIZE <= len(self.data):
-            self.data[inv_offset:inv_offset + 100 * INVENTORY_ITEM_SIZE] = b'\x00' * (100 * INVENTORY_ITEM_SIZE)
-            print(f"  ✅ 背包物品数据已清理")
 
     def _fix_furniture(self):
         fc = self.read_value('furniture_count')
@@ -932,36 +872,32 @@ class KunSaveEditor:
         if count is None or count < 0 or count > 5:
             self.write_value('pet_count', 0)
             print(f"  ✅ 宠物数量已清零")
-        # 清零宠物数据
-        pet_offset = self._player_offset('pets')
-        if pet_offset + 5 * PET_SIZE <= len(self.data):
-            self.data[pet_offset:pet_offset + 5 * PET_SIZE] = b'\x00' * (5 * PET_SIZE)
-            print(f"  ✅ 宠物数据已清理")
         else:
             print(f"  宠物数量: {count}")
 
     def _fix_forbes(self):
-        if os.path.exists(FORBES_FILE):
+        fp = self._p("forbes.list")
+        if os.path.exists(fp):
             try:
-                with open(FORBES_FILE, 'rb') as f:
+                with open(fp, 'rb') as f:
                     count = struct.unpack('<i', f.read(4))[0]
                 if count < 0 or count > 100:
                     print(f"  排行榜条目数异常({count})")
                     if input("  重置排行榜? (y/n): ").strip().lower() == 'y':
-                        os.remove(FORBES_FILE)
+                        os.remove(fp)
                         print("  ✅ 排行榜已删除")
                 else:
                     print(f"  排行榜正常: {count} 条记录")
             except:
                 print("  ⚠️ 排行榜文件损坏，正在删除...")
-                os.remove(FORBES_FILE)
+                os.remove(fp)
                 print("  ✅ 已删除损坏的排行榜")
         else:
             print("  排行榜文件不存在，无需修复")
 
     def show_status(self):
         """显示当前状态"""
-        if self.data is None:
+        if not self.values:
             print("请先加载存档")
             return
 
@@ -1262,44 +1198,45 @@ class KunSaveEditor:
                 print("  无效选择")
 
 
-def find_save_file() -> str:
-    """自动查找存档文件"""
-    possible_paths = [
-        os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'worker_sim_save.dat'),
-        'worker_sim_save.dat',
-        os.path.join(os.path.dirname(os.path.abspath(__file__)), 'worker_sim_save.dat'),
-        'kun_save.dat',  # 兼容旧名称
-    ]
-    for path in possible_paths:
-        if os.path.exists(path):
-            return os.path.normpath(path)
-    return 'worker_sim_save.dat'
+def find_save_dir() -> str:
+    """自动查找存档目录"""
+    if os.path.exists("save/manifest.work"):
+        return "save/"
+    # 尝试上级目录
+    parent = os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'save')
+    if os.path.exists(os.path.join(parent, "manifest.work")):
+        return parent + "/"
+    return "save/"
 
 
 def main():
     print("=" * 60)
-    print("  打工模拟器存档修改器 v2.3")
-    print(f"  目标存档大小: {SAVE_HEADER_SIZE + PLAYER_SIZE} 字节 (v{SAVE_VERSION})")
-    print("  支持新特性: 玩家名称/福布斯排行榜/饱食度/血量/精神系统")
+    print("  打工模拟器存档修改器 v3.0")
+    print("  适配文件夹结构存档 (save/)")
     print("=" * 60)
 
-    save_file = find_save_file()
-    if os.path.exists(save_file):
-        print(f"  找到存档文件: {save_file}")
+    save_dir = find_save_dir()
+    if os.path.exists(os.path.join(save_dir, "manifest.work")):
+        print(f"  找到存档目录: {save_dir}")
     else:
-        print(f"  未找到默认存档文件")
-        save_file = input("  请输入存档文件路径: ").strip()
-        if not save_file:
-            save_file = "worker_sim_save.dat"
+        print(f"  未找到存档目录 (期望 {save_dir}manifest.work)")
+        custom = input("  请输入存档目录路径 (直接回车退出): ").strip()
+        if not custom:
+            return
+        save_dir = custom.rstrip('/\\') + '/'
 
-    editor = KunSaveEditor(save_file)
+    global SAVE_DIR
+    SAVE_DIR = save_dir
+
+    editor = KunSaveEditor()
 
     if not editor.load_save():
         print("  无法加载存档，创建新存档吗？ (y/n): ", end='')
         if input().strip().lower() == 'y':
-            editor.data = bytearray(SAVE_HEADER_SIZE + PLAYER_SIZE)
-            struct.pack_into('<i', editor.data, 0, SAVE_VERSION)
-            print(f"  已创建新存档数据 ({len(editor.data)} 字节)")
+            editor.version = SAVE_VERSION
+            editor.values['player_name'] = '打工人'
+            editor.player_name = '打工人'
+            print("  ✅ 已创建新存档数据")
         else:
             print("  退出程序")
             return
