@@ -510,6 +510,7 @@ void trigger_work_micro_event(int task_index);  // v4.0 打工微型事件
  void save_forbes_ranking();
  void show_forbes_ranking();
  void show_forbes_ranking_menu();
+ void hospital_menu();
  
  // 事件系统
  void random_event();
@@ -534,6 +535,9 @@ void enable_ansi() {
     GetConsoleMode(hOut, &dwMode);
     dwMode |= ENABLE_VIRTUAL_TERMINAL_PROCESSING;
     SetConsoleMode(hOut, dwMode);
+    // v4.1 修复中文乱码：设置控制台为UTF-8输出
+    SetConsoleOutputCP(CP_UTF8);
+    SetConsoleCP(CP_UTF8);
 #endif
 }
  
@@ -2240,10 +2244,21 @@ void process_tongcheng_offer(int chatter_index) {
          print_colored(COLOR_YELLOW, "\n?? stats.dat 不存在，将使用默认值。\n");
      }
      
-     print_colored(COLOR_GREEN, "\n?? 游戏存档已加载！\n");
- }
+    // v4.1 存档安全性检查：清除过期/损坏的事件数据
+    if (player.active_event != EVENT_NONE) {
+        time_t now = time(NULL);
+        // 如果 event_end_time 为0或者已过期，清除事件状态
+        if (player.event_end_time <= 0 || player.event_end_time <= now) {
+            print_colored(COLOR_YELLOW, "\n?? 检测到过期事件（%s），已自动清除。\n", get_event_name(player.active_event));
+            player.active_event = EVENT_NONE;
+            player.event_end_time = 0;
+        }
+    }
+    
+    print_colored(COLOR_GREEN, "\n?? 游戏存档已加载！\n");
+}
 
- //================ 福布斯排行榜系统 ================
+//================ 福布斯排行榜系统 ================
  ForbesRankingEntry forbes_list[MAX_FORBES_ENTRIES];
  int forbes_count = 0;
 
@@ -2565,18 +2580,26 @@ void load_forbes_ranking() {
      }
  }
  
- void show_active_events() {
-     if (player.active_event != EVENT_NONE) {
-         time_t remaining = player.event_end_time - time(NULL);
-         if (remaining > 0) {
-             print_colored(COLOR_MAGENTA, "\n?? 当前事件：%s\n", get_event_name(player.active_event));
-             printf("   剩余时间：%lld秒\n", remaining);
-             printf("   效果：%s\n", get_event_description(player.active_event));
-         } else {
-             end_event();
-         }
-     }
- }
+void show_active_events() {
+    if (player.active_event != EVENT_NONE) {
+        time_t now = time(NULL);
+        time_t remaining = player.event_end_time - now;
+        // 安全性检查：event_end_time 必须大于0，剩余时间必须在合理范围内
+        // 事件最长持续时间只有300秒（5分钟），超过3600秒肯定异常
+        if (player.event_end_time > 0 && remaining > 0 && remaining < 3600) {
+            print_colored(COLOR_MAGENTA, "\n?? 当前事件：%s\n", get_event_name(player.active_event));
+            printf("   剩余时间：%lld秒\n", (long long)remaining);
+            printf("   效果：%s\n", get_event_description(player.active_event));
+        } else {
+            // 事件时间异常（如存档残留的过期事件或数据损坏），强制清除
+            if (player.active_event != EVENT_NONE) {
+                handle_event_effect(player.active_event, false);
+            }
+            player.active_event = EVENT_NONE;
+            player.event_end_time = 0;
+        }
+    }
+}
  
  //================ 状态效果处理 ================
  void check_hallucination() {
@@ -2628,10 +2651,18 @@ void load_forbes_ranking() {
          }
      }
      
-     // 精神自动恢复（缓慢）
-     if (player.spirit < 50 && !player.is_hallucinating && player.health > 30) {
-         player.spirit++;
-     }
+    // 精神自动恢复（缓慢）- 每60秒恢复1点
+    if (player.spirit < 50 && !player.is_hallucinating && player.health > 30) {
+        static time_t last_spirit_recovery = 0;
+        time_t now = time(NULL);
+        if (last_spirit_recovery == 0) {
+            last_spirit_recovery = now;
+        }
+        if (now - last_spirit_recovery >= 60) {
+            last_spirit_recovery = now;
+            player.spirit++;
+        }
+    }
      
      // 限制精神范围
      if (player.spirit > 100) player.spirit = 100;
@@ -2832,11 +2863,10 @@ void show_phone_menu() {
         
         printf("1. 进入聊天室\n");
         printf("2. 查看聊天记录\n");
-        printf("3. 使用食物\n");
         printf("0. 返回\n");
         draw_separator();
         
-        int choice = get_valid_input(0, 3);
+        int choice = get_valid_input(0, 2);
         
         switch (choice) {
             case 1:
@@ -2847,9 +2877,6 @@ void show_phone_menu() {
                 draw_box("?? 聊天记录");
                 show_chat_messages();
                 press_any_key();
-                break;
-            case 3:
-                eat_food();
                 break;
             case 0:
                 return;
@@ -3499,12 +3526,15 @@ void day_end() {
     }
     
     // 夜间恢复
-    int sleep_spirit_recovery = 20 + (rand() % 11);
-    int sleep_health_recovery = 5 + (rand() % 6);
+    int sleep_spirit_recovery = 15 + (rand() % 11);  // 15-25（不会睡一觉就兴奋到猝死）
+    int sleep_health_recovery = 15 + (rand() % 16);  // 15-30
     player.spirit += sleep_spirit_recovery;
     player.health += sleep_health_recovery;
-    if (player.spirit > 100) player.spirit = 100;
+    // 睡醒后精神不超过70，避免一醒来就"异常兴奋"有猝死风险
+    if (player.spirit > 70) player.spirit = 70;
     if (player.health > 100) player.health = 100;
+    
+    if (player.health <= 0) player.health = 10; // 保底
     
     printf("  ?? 睡眠恢复：精神+%d | 血量+%d\n", sleep_spirit_recovery, sleep_health_recovery);
     
@@ -3523,6 +3553,17 @@ void day_end() {
     // 升级难度（生活成本随等级增长）
     player.rent_cost = 100 + player.level * 10;
     player.living_cost = 80 + player.level * 5;
+    
+    // v4.1 新的一天：重置时间槽、清除过期事件、重置每日计数
+    player.daily_time_slots = player.max_time_slots;
+    player.today_income = 0;
+    player.today_expenses = 0;
+    player.today_work_count = 0;
+    player.today_event_count = 0;
+    player.daily_positive_events = 0;
+    player.active_event = EVENT_NONE;
+    player.event_end_time = 0;
+    player.day_ended = false;
     
     draw_separator();
     print_colored(COLOR_CYAN, "\n?? 新的一天开始了。坤城，早安。\n");
@@ -4131,6 +4172,17 @@ void do_task(int task_index) {
      
      Stock* stock = &player.stocks[stock_index];
      int total_cost = stock->current_price * amount;
+     
+     // v4.1 全梭哈确认：当花费超过当前坤币50%时弹出确认
+     if (total_cost > 0 && player.kun_coins > 0 && total_cost > player.kun_coins / 2) {
+         printf("\n?? 警告：此操作将花费 %d 坤币（当前余额：%lld 坤币）\n", total_cost, player.kun_coins);
+         printf("?? 确认要大手笔买入吗？(1=确认, 0=取消): ");
+         int confirm = get_valid_input(0, 1);
+         if (confirm == 0) {
+             print_colored(COLOR_YELLOW, "? 已取消买入。\n");
+             return;
+         }
+     }
      
      if (!remove_coins(total_cost)) {
          print_colored(COLOR_RED, "? 坤币不足！需要 %d 坤币\n", total_cost);
@@ -5521,7 +5573,82 @@ void show_prestige_menu() {
     }
     press_any_key();
 }
- 
+
+// 医院治疗系统
+void hospital_menu() {
+    while (true) {
+        CLEAR_SCREEN();
+        draw_box("?? 坤城人民医院");
+        
+        printf(COLOR_BOLD "  欢迎来到坤城人民医院！\n" COLOR_RESET);
+        printf("  ─────────────────────────────────────\n");
+        printf("  你的当前状态：\n");
+        printf("  ?? 血量: %d/100\n", player.health);
+        printf("  ?? 精神: %d/100\n", player.spirit);
+        printf("  ?? 当前坤币: %lld\n", player.kun_coins);
+        printf("  ─────────────────────────────────────\n\n");
+        
+        printf("  请选择治疗项目：\n\n");
+        printf("  1. 基础包扎 — 50坤币 (恢复30血量 + 10精神)\n");
+        printf("  2. 标准诊疗 — 100坤币 (恢复60血量 + 20精神)\n");
+        printf("  3. 全面康复 — 200坤币 (恢复100血量 + 40精神)\n");
+        printf("  4. 心理疏导 — 80坤币 (恢复50精神)\n");
+        printf("  0. 离开医院\n\n");
+        
+        draw_separator();
+        printf("请选择: ");
+        int choice = get_valid_input(0, 4);
+        
+        if (choice == 0) {
+            printf("\n  你离开了坤城人民医院。\n");
+            press_any_key();
+            break;
+        }
+        
+        int cost = 0, heal_hp = 0, heal_spirit = 0;
+        const char* treatment_name = "";
+        
+        switch (choice) {
+            case 1:
+                cost = 50; heal_hp = 30; heal_spirit = 10;
+                treatment_name = "基础包扎";
+                break;
+            case 2:
+                cost = 100; heal_hp = 60; heal_spirit = 20;
+                treatment_name = "标准诊疗";
+                break;
+            case 3:
+                cost = 200; heal_hp = 100; heal_spirit = 40;
+                treatment_name = "全面康复";
+                break;
+            case 4:
+                cost = 80; heal_hp = 0; heal_spirit = 50;
+                treatment_name = "心理疏导";
+                break;
+        }
+        
+        if (player.kun_coins >= cost) {
+            printf("\n  你接受了%s...\n", treatment_name);
+            remove_coins(cost);
+            
+            if (heal_hp > 0) {
+                player.health += heal_hp;
+                if (player.health > 100) player.health = 100;
+                printf("  ?? 血量 +%d (当前: %d/100)\n", heal_hp, player.health);
+            }
+            if (heal_spirit > 0) {
+                player.spirit += heal_spirit;
+                if (player.spirit > 100) player.spirit = 100;
+                printf("  ?? 精神 +%d (当前: %d/100)\n", heal_spirit, player.spirit);
+            }
+            printf("  ?? 花费了 %d 坤币\n", cost);
+        } else {
+            print_colored(COLOR_RED, "\n  ? 坤币不够！治疗需要 %d 坤币，你只有 %lld 坤币。\n", cost, player.kun_coins);
+        }
+        press_any_key();
+    }
+}
+
 void show_main_menu() {
     CLEAR_SCREEN();
     
@@ -5610,22 +5737,25 @@ void show_main_menu() {
     printf("│10. ?? 房产投资      │11. ?? 成就系统      │12. ? 声望系统      │\n");
     printf("│13. ?? 好友系统      │14. ?? 游戏统计      │15. ?? 会员商城      │\n");
     printf("│16. ?? 游戏设置      │17. ?? 帮助指南      │18. ?? 保存游戏      │\n");
-    printf("│19. ?? 手机          │20. ?? 福布斯排行    │                     │\n");
-    printf("│                     │ 0. ?? 退出游戏      │                     │\n");
+    printf("│19. ?? 手机          │20. ?? 福布斯排行    │21. ?? 睡觉休息      │\n");
+    printf("│22. ?? 医院治疗      │ 0. ?? 退出游戏      │    (结束今天)      │\n");
     printf("└─────────────────────┴─────────────────────┴─────────────────────┘\n");
     draw_separator();
     
     show_active_events();
     
     // 显示状态警告（增强版）
+    if (player.health <= 0) {
+        print_colored(COLOR_RED, "??? 警告：你已经昏迷了！血量0/100，必须去医院抢救！\n");
+    }
     if (player.hunger < 20) {
         print_colored(COLOR_RED, "? 警告：你非常饥饿！饱食度%d/100，请尽快去商城买食物！\n", player.hunger);
     } else if (player.hunger < 40) {
         print_colored(COLOR_YELLOW, "? 提示：你有点饿了（饱食度%d/100），建议去商城买食物。\n", player.hunger);
     }
-    if (player.health < 30) {
-        print_colored(COLOR_RED, "? 警告：你身受重伤！血量%d/100，请及时休息！\n", player.health);
-    } else if (player.health < 60) {
+    if (player.health < 30 && player.health > 0) {
+        print_colored(COLOR_RED, "? 警告：你身受重伤！血量%d/100，请及时治疗！\n", player.health);
+    } else if (player.health < 60 && player.health > 0) {
         print_colored(COLOR_YELLOW, "? 提示：你的健康状况不佳（血量%d/100），建议注意安全。\n", player.health);
     }
     if (player.spirit < 20) {
@@ -5732,7 +5862,9 @@ void show_main_menu() {
  //================ 主函数 ================
  int main() {
      enable_ansi();
- #ifdef _WIN32
+#ifdef _WIN32
+     // 强制切换控制台为UTF-8编码，解决中文乱码
+     system("chcp 65001 > nul");
      anti_analysis_check();
  #endif
      show_loading_screen(2000);
@@ -5746,8 +5878,8 @@ void show_main_menu() {
      while (1) {
          show_main_menu();
          
-printf("请输入选项: ");
-        int choice = get_valid_input(0, 20);
+        printf("请输入选项: ");
+        int choice = get_valid_input(0, 22);
          
          time_t now = time(NULL);
          if (now - last_passive_time >= 3600) {
@@ -5764,10 +5896,20 @@ printf("请输入选项: ");
          }
          
          recover_energy();
-         process_spirit_effects();
-         check_hallucination();
-         
-         switch (choice) {
+              process_spirit_effects();
+        check_hallucination();
+        
+        // 血量≤0时强制送医
+        if (player.health <= 0 && choice != 22) {
+            CLEAR_SCREEN();
+            print_colored(COLOR_RED, "\n  ??? 你因失血过多而昏倒了！\n");
+            print_colored(COLOR_RED, "  ??? 路人把你送到了坤城人民医院...\n\n");
+            press_any_key();
+            hospital_menu();
+            continue; // 回主菜单重新显示
+        }
+        
+        switch (choice) {
              case 1:
                  show_status();
                  press_any_key();
@@ -5986,10 +6128,22 @@ printf("请输入选项: ");
              case 19:
                  show_phone_menu();
                  break;
-             case 20:
-                 show_forbes_ranking_menu();
-                 break;
-             case 0:
+            case 20:
+                show_forbes_ranking_menu();
+                break;
+            case 21:
+                // 睡觉休息 - 跳过这一天
+                CLEAR_SCREEN();
+                draw_box("?? 睡觉休息");
+                printf("  你决定提前结束今天的工作，好好休息一觉...\n\n");
+                press_any_key();
+                day_end();
+                press_any_key();
+                break;
+            case 22:
+                hospital_menu();
+                break;
+            case 0:
                  CLEAR_SCREEN();
                  printf(COLOR_YELLOW "\n");
                  printf("  ╔════════════════════════════════════════════════════════════╗\n");

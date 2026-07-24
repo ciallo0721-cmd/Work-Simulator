@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-打工模拟器存档修改器 v3.0
-适配文件夹结构存档 (v8)
+打工模拟器存档修改器 v4.1
+适配 v4.1 坤城篇 (SAVE_VERSION=8)
 save/manifest.work + player/core.player + pets/*.pet + friends/*.chr + tasks.ts + inventory.bag + stats.dat + forbes.list
 """
 
@@ -192,7 +192,7 @@ class KunSaveEditor:
             if not raw or len(raw) < 48:
                 print("错误: manifest.work 损坏")
                 return False
-            ver, name_b, day_cnt, save_t = struct.unpack_from('<i 32s i q', raw, 0)
+            ver, name_b, day_cnt, save_t = struct.unpack_from('<i 50s i q', raw, 0)
             self.version = ver
             self.player_name = name_b.rstrip(b'\0').decode('utf-8', errors='ignore')
 
@@ -254,8 +254,8 @@ class KunSaveEditor:
         """写回 save/ 文件夹"""
         try:
             # manifest.work
-            name_b = self.player_name.encode('utf-8')[:31].ljust(32, b'\0')
-            manifest = struct.pack('<i 32s i q', SAVE_VERSION, name_b,
+            name_b = self.player_name.encode('utf-8')[:49].ljust(50, b'\0')
+            manifest = struct.pack('<i 50s i q', SAVE_VERSION, name_b,
                                    self.values.get('day_count', 0), int(time.time()))
             self._write_file("manifest.work", manifest)
 
@@ -1033,7 +1033,7 @@ class KunSaveEditor:
         """交互式修改模式"""
         while True:
             print("\n" + "=" * 60)
-            print("  存档修改器 v2.3 - 交互模式")
+            print("  存档修改器 v4.1 - 交互模式")
             print("=" * 60)
             print("  1. 显示当前状态")
             print("  2. 修改基本属性")
