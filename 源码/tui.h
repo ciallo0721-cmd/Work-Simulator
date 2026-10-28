@@ -981,6 +981,38 @@ static int tui_input_int(int y, int w, const char* label, int min, int max, int*
     }
 }
 
+/* 行输入：交给控制台原生回显，因此中文输入法可用。
+ * 返回读到的字节数，EOF 返回 -1。 */
+static int tui_line_input_native(int y, int w, const char* prompt, char* buf, int cap)
+{
+    int px, len;
+
+    if (!buf || cap <= 1) return -1;
+    buf[0] = 0;
+
+    tc_fill(0, y, w, 1, " ", TC_WHITE, TC_BG3);
+    px = tc_puts(1, y, prompt, TC_YELLOW, TC_BG3);
+    tui_present();
+
+    /* 定位到底部输入行并打开光标，让控制台自己回显（含中文） */
+    printf("\033[%d;%dH\033[?25h", y + 1, px + 1);
+    fflush(stdout);
+
+    if (fgets(buf, cap, stdin) == NULL) {
+        printf("\033[?25l");
+        fflush(stdout);
+        return -1;
+    }
+    printf("\033[?25l");
+    fflush(stdout);
+
+    len = (int)strlen(buf);
+    while (len > 0 && (buf[len - 1] == '\n' || buf[len - 1] == '\r')) buf[--len] = 0;
+
+    tui_dirty_all = 1;   /* 输入回显留在屏幕上，强制整屏重画 */
+    return len;
+}
+
 /* 任意键 */
 static void tui_pause(int y, int w, const char* msg)
 {

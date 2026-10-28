@@ -1132,42 +1132,49 @@ static void tui_sync_title(void)
      // 如果last_login为0，说明是新存档，需要输入名称
      time_t now = time(NULL);
      if (player.last_login == 0) {
-         CLEAR_SCREEN();
-         printf(COLOR_YELLOW COLOR_BOLD);
-         printf("\n  ╔═══════════════════════════════════════════════════════════╗\n");
-         printf("  ║                                                           ║\n");
-         printf("  ║            欢迎来到 打工模拟器 v4.0 — 坤城篇               ║\n");
-         printf("  ║              Welcome to Worker Simulator!                  ║\n");
-         printf("  ║                                                           ║\n");
-         printf("  ╚═══════════════════════════════════════════════════════════╝\n");
-         printf(COLOR_RESET);
+         {
+             char input_name[50];
+             int W, H, k2;
+             static const char* intro[6] = {
+                 "你来到了坤城 —— 一座没有明确地理位置的沿海都市，约 300 万人口。",
+                 "这里的人来自五湖四海：有人在 CBD 穿着西装谈百万生意，",
+                 "有人在老城区出租屋里算着明天的饭钱。",
+                 "今天还在路边摆摊的人，明天可能开奔驰 —— 但也可能反过来。",
+                 "你兜里只有 500 坤币，租住在老城区的一间小屋里。",
+                 "手上有一部手机，一个聊天室账号，和一颗想往上爬的心。"
+             };
 
-         printf("\n");
-         print_colored(COLOR_CYAN, "  「坤城不问你的过去，只问你的价格。」\n\n");
-         printf("  你来到了坤城——一座没有明确地理位置的沿海都市，约300万人口。\n");
-         printf("  这里的人来自五湖四海：有人在CBD穿着西装谈百万生意，\n");
-         printf("  有人在老城区出租屋里算着明天的饭钱。\n");
-         printf("  今天还在路边摆摊的人，明天可能开奔驰——但也可能反过来。\n\n");
-         printf("  你兜里只有500坤币，租住在老城区的一间小屋里。\n");
-         printf("  手上有一部手机，一个聊天室账号，和一颗想往上爬的心。\n\n");
-         print_colored(COLOR_YELLOW, "  坤城的故事，从今天开始。\n\n");
+             tui_begin();
+             W = tui_cv.w; H = tui_cv.h;
+             tc_puts_center(0, 2, W, "坤  城", TC_YELLOW, TC_BG);
+             tc_puts_center(0, 3, W, "打 工 模 拟 器   v5.0", TC_WHITE, TC_BG);
+             tc_puts_center(0, 5, W, "「坤城不问你的过去，只问你的价格。」", TC_CYAN, TC_BG);
+             for (k2 = 0; k2 < 6; k2++)
+                 tc_puts_center(0, 8 + k2, W, intro[k2], TC_DIM, TC_BG);
+             tc_puts_center(0, 15, W, "坤城的故事，从今天开始。", TC_YELLOW, TC_BG);
+             tui_present();
 
-         printf("  请输入你的名字（最多49个字符）: ");
-         char input_name[50];
-         if (fgets(input_name, sizeof(input_name), stdin) != NULL) {
-             // 去除换行符
-             input_name[strcspn(input_name, "\n")] = 0;
-             if (strlen(input_name) > 0) {
-                 safe_strcpy(player.player_name, input_name, 50);
-             } else {
+             input_name[0] = 0;
+             if (tui_line_input_native(H - 1, W, " 你的名字（直接回车用「匿名玩家」）› ",
+                                       input_name, sizeof input_name) < 0 || input_name[0] == 0) {
                  safe_strcpy(player.player_name, "匿名玩家", 50);
+             } else {
+                 safe_strcpy(player.player_name, input_name, 50);
              }
-         } else {
-             safe_strcpy(player.player_name, "匿名玩家", 50);
-         }
 
-         print_colored(COLOR_GREEN, "\n  欢迎，%s！\n", player.player_name);
-         press_any_key();
+             tui_begin();
+             W = tui_cv.w; H = tui_cv.h;
+             tc_puts_center(0, H / 2 - 3, W, "坤  城", TC_YELLOW, TC_BG);
+             tc_puts_center(0, H / 2 - 1, W, "打 工 模 拟 器   v5.0", TC_WHITE, TC_BG);
+             {
+                 char wb[128];
+                 snprintf(wb, sizeof wb, "欢迎，%s。", player.player_name);
+                 tc_puts_center(0, H / 2 + 2, W, wb, TC_GREEN, TC_BG);
+                 tc_puts_center(0, H / 2 + 4, W, "你兜里只有 500 坤币。今天，从这里开始。", TC_DIM, TC_BG);
+             }
+             tui_present();
+             if (!g_tui_selftest) tui_pause(H - 1, W, "按任意键进入坤城");
+         }
 
          player.last_login = now;
          player.game_start_time = now;
@@ -3246,12 +3253,106 @@ void show_phone_menu() {
     }
 }
  
+/*================ v5.0 TUI 聊天室 ================*/
+static void chat_draw(int waiting)
+{
+    int W, H, i, online = 0;
+    int list_w = 24;
+    int mw, cy, ch, row;
+
+    tui_begin();
+    W = tui_cv.w;
+    H = tui_cv.h;
+    if (W < 86) list_w = 0;
+
+    for (i = 0; i < player.chatter_count; i++)
+        if (player.chatters[i].is_online) online++;
+
+    tui_draw_topbar();
+
+    mw = list_w ? (W - list_w - 1) : W;
+    cy = 1;
+    ch = H - 3;
+    if (ch < 6) ch = 6;
+
+    /* ---- 消息面板 ---- */
+    {
+        char ttl[80];
+        snprintf(ttl, sizeof ttl, "坤城聊天室 · 在线 %d/%d", online, player.chatter_count);
+        tc_panel(0, cy, mw, ch, ttl, TC_BORDER, TC_BG2, TC_CYAN);
+    }
+
+    /* 从底部往上铺消息，最新的贴着面板底边框内侧 */
+    row = ch - 3;
+    for (i = player.chat_message_count - 1; i >= 0 && row >= 0; i--) {
+        ChatMessage* m = &player.chat_history[i];
+        int fg = TC_TEXT;
+        char ts[16];
+        struct tm* lt;
+        int y = cy + 1 + row;
+
+        switch (m->type) {
+            case CHATTER_SCAMMER:     fg = TC_RED; break;
+            case CHATTER_BLACKMARKET: fg = TC_ORANGE; break;
+            case CHATTER_TONGCHENG:   fg = TC_MAGENTA; break;
+            default:                  fg = TC_TEXT; break;
+        }
+        if (strcmp(m->sender, "系统") == 0) fg = TC_YELLOW;
+        else if (strcmp(m->sender, "你") == 0) fg = TC_CYAN;
+
+        lt = localtime(&m->timestamp);
+        if (lt) snprintf(ts, sizeof ts, "%02d:%02d", lt->tm_hour, lt->tm_min);
+        else    snprintf(ts, sizeof ts, "--:--");
+
+        tc_puts(2, y, ts, TC_FAINT, TC_BG2);
+        tc_putsn(9, y, 10, m->sender, fg, TC_BG2);
+        tc_putsn(20, y, mw - 22, m->content, fg, TC_BG2);
+        row--;
+    }
+
+    if (player.chat_message_count == 0)
+        tc_puts(3, cy + 1, "还没有人说话。试着发一条，或者 @某人 搭话。", TC_FAINT, TC_BG2);
+
+    /* ---- 在线列表 ---- */
+    if (list_w) {
+        tc_panel(W - list_w, cy, list_w, ch, "在线名单", TC_BORDER, TC_BG2, TC_CYAN);
+        {
+            int r = 0;
+            for (i = 0; i < player.chatter_count && r < ch - 2; i++) {
+                Chatter* ct = &player.chatters[i];
+                int fg;
+                if (ct->type == CHATTER_SCAMMER)          fg = ct->is_online ? TC_RED     : TC_REDD;
+                else if (ct->type == CHATTER_BLACKMARKET) fg = ct->is_online ? TC_ORANGE  : TC_FAINT;
+                else if (ct->type == CHATTER_TONGCHENG)   fg = ct->is_online ? TC_MAGENTA : TC_FAINT;
+                else                                      fg = ct->is_online ? TC_TEXT    : TC_FAINT;
+
+                tc_put(W - list_w + 2, cy + 1 + r, ct->is_online ? "*" : "-", fg, TC_BG2);
+                tc_putsn(W - list_w + 4, cy + 1 + r, list_w - 6, ct->name, fg, TC_BG2);
+                r++;
+            }
+            if (r == 0)
+                tc_puts(W - list_w + 2, cy + 1, "没人在线", TC_FAINT, TC_BG2);
+        }
+    }
+
+    /* ---- 底部 ---- */
+    if (waiting >= 0 && waiting < player.chatter_count) {
+        char wb[160];
+        snprintf(wb, sizeof wb, " %s 正等你回话 —— 输入「同意」或「拒绝」，其他内容会被忽略 ",
+                 player.chatters[waiting].name);
+        tc_fill(0, H - 2, W, 1, " ", TC_BLACK, TC_YELLOW);
+        tc_putsn(1, H - 2, W - 2, wb, TC_BLACK, TC_YELLOW);
+        tc_fill(0, H - 1, W, 1, " ", TC_TEXT, TC_BG3);
+    } else {
+        tui_draw_keybar(" [回车] 发送   [@名字 内容] 搭话   [/quit] 或 [Esc] 退出   ");
+    }
+}
+
 void show_chat_room() {
     char input[200];
     static time_t last_auto_chat = 0;
-    static int waiting_for_agreement = -1;  // -1表示没有等待同意，否则是chatter索引
-    
-    // 自动发言消息池 —— 坤城聊天室 v4.0
+    static int waiting_for_agreement = -1;
+
     const char* auto_messages[] = {
         "今天坤城天气不错",
         "有人在吗？好无聊",
@@ -3266,141 +3367,113 @@ void show_chat_room() {
         "大学城那边又开新店了",
         "今天股市你们关注了吗？"
     };
-    int num_auto_messages = sizeof(auto_messages) / sizeof(auto_messages[0]);
-    
-    // 系统刷新消息池
+    int num_auto_messages = (int)(sizeof(auto_messages) / sizeof(auto_messages[0]));
+
     const char* system_messages[] = {
-        "系统：聊天室定时清理完成",
-        "系统：欢迎新用户加入",
-        "系统：请注意文明聊天",
-        "系统：服务器即将维护，请保存聊天记录"
+        "聊天室定时清理完成",
+        "欢迎新用户加入",
+        "请注意文明聊天",
+        "服务器即将维护，请保存聊天记录"
     };
-    int num_system_messages = sizeof(system_messages) / sizeof(system_messages[0]);
-    
-    while (1) {
-        CLEAR_SCREEN();
-        draw_box("聊天室");
-        
-        // 显示在线人数
-        int online = 0;
-        for (int i = 0; i < player.chatter_count; i++) {
-            if (player.chatters[i].is_online) online++;
-        }
-        printf("在线: %d人\n\n", online);
-        
-        // 显示最近消息
-        show_chat_messages();
-        
-        // ===== 功能1：自动有人说话 =====
+    int num_system_messages = (int)(sizeof(system_messages) / sizeof(system_messages[0]));
+
+    tui_page_enter("聊天室");
+
+    for (;;) {
         time_t now = time(NULL);
-        if (now - last_auto_chat >= 8 || (rand() % 100 < 35 && now - last_auto_chat >= 3)) {
-            int chatter_idx = rand() % player.chatter_count;
-            if (player.chatters[chatter_idx].is_online) {
-                int msg_idx = rand() % num_auto_messages;
-                add_chat_message(player.chatters[chatter_idx].name, auto_messages[msg_idx], player.chatters[chatter_idx].type);
+        int nc = player.chatter_count > 0 ? player.chatter_count : 1;
+
+        /* ---- 自动有人说话 ---- */
+        if (player.chatter_count > 0 &&
+            (now - last_auto_chat >= 8 || (rand() % 100 < 35 && now - last_auto_chat >= 3))) {
+            int ci = rand() % nc;
+            if (player.chatters[ci].is_online) {
+                add_chat_message(player.chatters[ci].name,
+                                 auto_messages[rand() % num_auto_messages],
+                                 player.chatters[ci].type);
             }
             last_auto_chat = now;
         }
-        
-        // ===== 功能4：随机刷新 =====
-        if (rand() % 100 < 15) {
-            int msg_idx = rand() % num_system_messages;
-            add_chat_message("系统", system_messages[msg_idx], CHATTER_NORMAL);
+        /* ---- 系统消息 ---- */
+        if (rand() % 100 < 12) {
+            add_chat_message("系统", system_messages[rand() % num_system_messages], CHATTER_NORMAL);
         }
-        
-        draw_separator();
-        
-        // 如果正在等待同意/拒绝，提示用户
-        if (waiting_for_agreement >= 0) {
-            printf(COLOR_YELLOW "【%s 正在等待你的回复...】\n" COLOR_RESET, player.chatters[waiting_for_agreement].name);
-            printf("请输入：同意 或 拒绝 | /quit 退出\n");
-        } else {
-            printf("命令：@用户名 内容 | 同意/拒绝 | /quit 退出\n");
+
+        if (waiting_for_agreement >= player.chatter_count) waiting_for_agreement = -1;
+
+        chat_draw(waiting_for_agreement);
+
+        if (tui_line_input_native(tui_cv.h - 1, tui_cv.w, " 说点什么 › ", input, sizeof input) < 0) {
+            break;
         }
-        printf("输入消息: ");
-        
-        if (fgets(input, sizeof(input), stdin) == NULL) break;
-        input[strcspn(input, "\n")] = '\0';
-        
-        // ===== 功能3：不能发送空白 =====
-        // 检查是否是空白消息（空或只有空格）
-        bool all_spaces = true;
-        for (int i = 0; input[i] != '\0'; i++) {
-            if (input[i] != ' ' && input[i] != '\t' && input[i] != '\n' && input[i] != '\r') {
-                all_spaces = false;
-                break;
+
+        /* ---- 空白检查 ---- */
+        {
+            bool all_spaces = true;
+            int i;
+            for (i = 0; input[i]; i++) {
+                if (input[i] != ' ' && input[i] != '\t') { all_spaces = false; break; }
+            }
+            if (input[0] == 0 || all_spaces) {
+                add_chat_message("系统", "不能发送空白消息！", CHATTER_NORMAL);
+                continue;
             }
         }
-        if (strlen(input) == 0 || all_spaces) {
-            add_chat_message("系统", "不能发送空白消息！", CHATTER_NORMAL);
-            continue;
-        }
-        
-        if (strcmp(input, "/quit") == 0) break;
-        
-        // ===== 功能2：@人物同意机制 =====
-        // 处理等待同意/拒绝的状态
+
+        if (strcmp(input, "/quit") == 0 || strcmp(input, "/q") == 0) break;
+
+        /* ---- 等对方回复时，只认同意 / 拒绝 ---- */
         if (waiting_for_agreement >= 0) {
-            if (strcmp(input, "同意") == 0 || strcmp(input, "同意") == 0) {
-                add_chat_message("你", "同意", CHATTER_NORMAL);
-                
-                // 根据chatter类型处理同意后的逻辑
+            if (strcmp(input, "同意") == 0) {
                 ChatterType type = player.chatters[waiting_for_agreement].type;
+                add_chat_message("你", "同意", CHATTER_NORMAL);
+
                 if (type == CHATTER_SCAMMER) {
-                    // 骗子：扣100 coin
                     if (player.kun_coins >= 100) {
                         player.kun_coins -= 100;
-                        add_chat_message(player.chatters[waiting_for_agreement].name, "哈哈，谢谢你的100坤币！你真是个好人~", type);
-                        print_colored(COLOR_RED, "你被骗子骗了100坤币！\n");
+                        add_chat_message(player.chatters[waiting_for_agreement].name,
+                                         "哈哈，谢谢你的100坤币！你真是个好人~", type);
                     } else {
-                        add_chat_message(player.chatters[waiting_for_agreement].name, "哼，没钱还说什么同意？滚！", type);
+                        add_chat_message(player.chatters[waiting_for_agreement].name,
+                                         "哼，没钱还说什么同意？滚！", type);
                     }
                 } else if (type == CHATTER_BLACKMARKET) {
                     process_od_offer(waiting_for_agreement);
                 } else if (type == CHATTER_TONGCHENG) {
                     process_tongcheng_offer(waiting_for_agreement);
                 } else {
-                    add_chat_message(player.chatters[waiting_for_agreement].name, "谢谢你的同意！你真好~", type);
+                    add_chat_message(player.chatters[waiting_for_agreement].name,
+                                     "谢谢你的同意！你真好~", type);
                 }
-                
                 waiting_for_agreement = -1;
-                press_any_key();
                 continue;
-            } else if (strcmp(input, "拒绝") == 0 || strcmp(input, "拒绝") == 0) {
+            } else if (strcmp(input, "拒绝") == 0) {
                 add_chat_message("你", "拒绝", CHATTER_NORMAL);
-                add_chat_message(player.chatters[waiting_for_agreement].name, "好吧，没关系...", player.chatters[waiting_for_agreement].type);
+                add_chat_message(player.chatters[waiting_for_agreement].name, "好吧，没关系...",
+                                 player.chatters[waiting_for_agreement].type);
                 waiting_for_agreement = -1;
-                press_any_key();
                 continue;
             } else {
                 add_chat_message("系统", "请输入 同意 或 拒绝", CHATTER_NORMAL);
                 continue;
             }
         }
-        
-        // 添加到聊天历史
+
+        /* ---- 发出去 ---- */
         add_chat_message("你", input, CHATTER_NORMAL);
-        
-        // 检查是否@某人
+
         if (input[0] == '@') {
             char target_name[30];
             char message[170];
-            
-            // 尝试解析 @用户名 内容
-            if (sscanf(input, "@%s %[^\n]", target_name, message) >= 1) {
-                // 查找目标
-                for (int i = 0; i < player.chatter_count; i++) {
+            int hit = 0, i;
+
+            message[0] = 0;
+            if (sscanf(input, "@%29s %169[^\n]", target_name, message) >= 1) {
+                for (i = 0; i < player.chatter_count; i++) {
                     if (strcmp(player.chatters[i].name, target_name) == 0) {
-                        // AI响应
-                        if (strlen(message) > 0) {
-                            ai_chatter_response(i, message);
-                        } else {
-                            // 只@了人名，没有消息
-                            ai_chatter_response(i, "你好");
-                        }
-                        
-                        // ===== @人物同意机制 =====
-                        // 50%概率让对方提出需要同意的请求
+                        hit = 1;
+                        ai_chatter_response(i, message[0] ? message : "你好");
+
                         if (rand() % 100 < 50) {
                             const char* requests[] = {
                                 "我能向你借点钱吗？",
@@ -3408,43 +3481,40 @@ void show_chat_room() {
                                 "我想和你做个交易，可以吗？",
                                 "你能帮我个忙吗？"
                             };
-                            int req_idx = rand() % (sizeof(requests) / sizeof(requests[0]));
-                            add_chat_message(player.chatters[i].name, requests[req_idx], player.chatters[i].type);
+                            add_chat_message(player.chatters[i].name,
+                                             requests[rand() % 4],
+                                             player.chatters[i].type);
                             waiting_for_agreement = i;
                         }
-                        
-                        // 特殊处理：黑产的OD提议
+
                         if (player.chatters[i].type == CHATTER_BLACKMARKET &&
-                            (strstr(message, "OD") || strstr(message, "药物") || 
+                            (strstr(message, "OD") || strstr(message, "药物") ||
                              strstr(message, "试试") || strstr(message, "东西"))) {
                             process_od_offer(i);
                         }
-                        
-                        // 特殊处理：同城的见面邀请
                         if (player.chatters[i].type == CHATTER_TONGCHENG &&
                             (strstr(message, "约") || strstr(message, "见面") ||
                              strstr(message, "出来") || strstr(message, "一起"))) {
                             process_tongcheng_offer(i);
                         }
-                        
                         break;
                     }
                 }
+                if (!hit) add_chat_message("系统", "聊天室里没有这个人。", CHATTER_NORMAL);
             } else {
                 add_chat_message("系统", "格式错误：请使用 @用户名 内容", CHATTER_NORMAL);
             }
         } else {
-            // 随机AI回复（10%概率）
-            if (rand() % 100 < 10) {
-                int chatter_idx = rand() % player.chatter_count;
-                if (player.chatters[chatter_idx].is_online) {
-                    ai_chatter_response(chatter_idx, input);
+            if (rand() % 100 < 12) {
+                int ci = rand() % nc;
+                if (player.chatters[ci].is_online) {
+                    ai_chatter_response(ci, input);
                 }
             }
         }
-        
-        press_any_key();
     }
+
+    tui_stream_reset();
 }
  
  //================ 成就系统 ================
@@ -5813,6 +5883,7 @@ void open_stock_chart_window() {
 }
 
 /*================ v5.0 TUI 股票终端 ================*/
+static int g_stock_focus = 0;   /* 1 = 图表占满宽度（C 键切换） */
 static void stock_draw(int sel, int live, int blink, const char* msg)
 {
     int W, H;
@@ -5828,10 +5899,16 @@ static void stock_draw(int sel, int live, int blink, const char* msg)
     ch = H - 3;
     tui_draw_topbar();
 
-    lw = (W >= 104) ? 42 : W / 2;
-    rx = lw + 1;
-    rw = W - rx - 1;
-    if (rw < 34) { lw = W * 3 / 5; rx = lw + 1; rw = W - rx - 1; }
+    if (g_stock_focus) {
+        lw = 0;
+        rx = 0;
+        rw = W;
+    } else {
+        lw = (W >= 104) ? 42 : W / 2;
+        rx = lw + 1;
+        rw = W - rx - 1;
+        if (rw < 34) { lw = W * 3 / 5; rx = lw + 1; rw = W - rx - 1; }
+    }
 
     s = &player.stocks[sel < 25 ? sel : 0];
 
@@ -5841,8 +5918,8 @@ static void stock_draw(int sel, int live, int blink, const char* msg)
         snprintf(ttl, sizeof ttl, "行情榜 %d/25", sel + 1);
         tc_panel(0, cy, lw, ch, ttl, TC_BORDER, TC_BG2, TC_YELLOW);
     }
-    list_h = ch - 2;
-    if (list_h < 1) list_h = 1;
+    list_h = g_stock_focus ? 0 : (ch - 2);
+    if (list_h < 0) list_h = 0;
     list_start = 0;
     if (sel >= list_h) list_start = sel - list_h + 1;
 
@@ -5954,7 +6031,7 @@ static void stock_draw(int sel, int live, int blink, const char* msg)
 
     /* ===== 底部 ===== */
     snprintf(buf, sizeof buf,
-             " [方向键] 选股  [B] 买入  [S] 卖出  [空格] %s  [R] 跳一档  [C] 外置图  [Esc] 返回 ",
+             " [方向键] 选股  [B] 买入  [S] 卖出  [空格] %s  [R] 跳一档  [C] 放大图表  [Esc] 返回 ",
              live ? "暂停实时" : "开启实时");
     tui_draw_keybar(buf);
 
@@ -5973,6 +6050,7 @@ void show_stock_market() {
     time_t msg_until = 0;
 
     tui_page_enter("股票市场");
+    g_stock_focus = 0;
     tui_trend_load();
     if (g_trend_n <= 1 && player.stocks[0].current_price > 0) tui_trend_push();
 
@@ -6015,7 +6093,12 @@ void show_stock_market() {
             continue;
         }
 
-        if (k == 'c') { open_stock_chart_window(); snprintf(msg, sizeof msg, "已尝试打开外置行情图窗口"); msg_until = time(NULL) + 2; continue; }
+        if (k == 'c') {
+            g_stock_focus = !g_stock_focus;
+            snprintf(msg, sizeof msg, "图表%s（C 键切换）", g_stock_focus ? "已放大" : "已还原");
+            msg_until = time(NULL) + 2;
+            continue;
+        }
 
         if (k == 'b' || k == 's') {
             int amount = 0;
@@ -6571,6 +6654,9 @@ static void tui_selftest(void)
         tui_draw_main_menu(0);
     } else if (frame == 2) {
         stock_draw(8, 1, 1, "");
+    } else if (frame == 5) {
+        g_stock_focus = 1;
+        stock_draw(8, 1, 1, "");
     } else if (frame == 3) {
         tui_stream_reset();
         tui_stream_set_title("技能系统");
@@ -6588,6 +6674,20 @@ static void tui_selftest(void)
         printf("6.耐力 7.创造力 8.领导力 9.谈判 10.管理\n");
         printf("0.返回\n");
         tui_draw_page(NULL);
+    } else if (frame == 4) {
+        init_chat_room();
+        player.chat_message_count = 0;
+        add_chat_message("系统", "欢迎来到坤城聊天室！请遵守社区规则。", CHATTER_NORMAL);
+        add_chat_message("老徐", "今天老城区那边又堵了，我走了四十分钟", CHATTER_NORMAL);
+        add_chat_message("你", "@老徐 晚上一起吃个饭？", CHATTER_NORMAL);
+        add_chat_message("老徐", "行啊，老地方，六点半", CHATTER_NORMAL);
+        add_chat_message("卖药的", "有需要 OD 的私聊我，价格好说", CHATTER_BLACKMARKET);
+        add_chat_message("同城小哥", "周末有人一起去爬山吗，人少点好", CHATTER_TONGCHENG);
+        add_chat_message("骗子张", "兄弟，我这儿有个稳赚不赔的项目，了解一下？", CHATTER_SCAMMER);
+        add_chat_message("你", "算了，我这月房租还没着落", CHATTER_NORMAL);
+        add_chat_message("阿May", "都一样，坤城这地方就是这样", CHATTER_NORMAL);
+        add_chat_message("老徐", "熬吧，熬过去就好了", CHATTER_NORMAL);
+        chat_draw(-1);
     } else {
         tui_draw_main_menu(8);
     }
