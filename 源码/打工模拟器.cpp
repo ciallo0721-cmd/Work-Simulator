@@ -1,9 +1,18 @@
-/*
- * 打工模拟器 v4.0 - 坤城篇
+﻿/*
+ * 打工模拟器 v5.0 - 坤城篇 · TUI 版
  * 世界：坤城 —— 一座虚构的当代中国沿海城市，300万人口的欲望都市
  * 叙事主题："在一个人人都想往上爬的城市里，你要成为什么样的人？"
- * 编译环境: Windows/Linux, C11/C++兼容
- * 编译命令: gcc -o worker_sim worker_simulator.c -lm
+ * 编译环境: Windows / Linux，C++（gcc 或 g++ 均可）
+ *
+ * ⚠ v5.0 起必须用 UTF-8 编译，绝对不要加 -fexec-charset=GBK！
+ *   TUI 用 UTF-8 直出 + ANSI 转义，加 GBK 会导致
+ *   "converting to execution character set: Illegal byte sequence"
+ *   让 tui.h 解析中断，然后满屏 "tui_stream_reset was not declared"。
+ *
+ * 编译命令(Windows MinGW):
+ *     g++ -O2 -o 打工模拟器.exe 打工模拟器.cpp -lm
+ * 编译命令(Linux/Mac):
+ *     g++ -O2 -o worker_sim 打工模拟器.cpp -lm
  */
 
  #include <stdio.h>
@@ -28,6 +37,9 @@
  #include <unistd.h>
  #define _getch() getchar()
  #endif
+
+/* v5.0 TUI 引擎（必须放在所有系统头文件之后，因为它会重定义 printf） */
+#include "tui.h"
  
  //================ 常量定义 ================
  #define MAX_FURNITURE 50
@@ -45,13 +57,16 @@
 #define SAVE_DIR "save/"
 #define SAVE_VERSION 8  // v4.1 文件夹结构存档
  
+ 
  // 货币限制常量
  #define MAX_KUN_COINS 9223372036854775807LL
  
  // 聊天室常量
- #define MAX_CHATTERS 8
+ #define MAX_CHATTERS 10
  #define MAX_MESSAGES 50
  #define CHAT_HISTORY_FILE "chat_history.txt"
+#define STOCK_HISTORY_FILE "save/stock_history.dat"
+#define STOCK_HISTORY_POINTS 30  // 每支股票保留30个历史价格
  
  // ANSI颜色代码
  #define COLOR_RED "\033[31m"
@@ -64,7 +79,8 @@
  #define COLOR_RESET "\033[0m"
  #define COLOR_BOLD "\033[1m"
  
- #define CLEAR_SCREEN() printf("\033[2J\033[H")
+// v5.0: 清屏改为清空 TUI 文本流（真正的重绘由页面框架负责）
+ #define CLEAR_SCREEN() tui_stream_reset()
  
  // 货币类型
  typedef long long money_t;
@@ -330,8 +346,8 @@ typedef enum {
      int current_company_level;
      InventoryItem inventory[MAX_INVENTORY];
      int inventory_count;
-     Stock stocks[5];
-     int invested_stocks[5];
+    Stock stocks[25];
+    int invested_stocks[25];
      Property properties[10];
      int property_count;
      Friend friends[MAX_FRIENDS];
@@ -467,6 +483,7 @@ typedef enum {
  void buy_item(int index);
  void buy_stock(int stock_index, int amount);
  void sell_stock(int stock_index, int amount);
+ void open_stock_chart_window();
  void buy_property(int property_index);
  void upgrade_skill(int skill_index);
  void feed_pet(int pet_index);
@@ -547,98 +564,428 @@ void enable_ansi() {
  }
  
  void print_colored(const char* color, const char* format, ...) {
+     char buf[4096];
      va_list args;
      va_start(args, format);
-     printf("%s", color);
-     vprintf(format, args);
-     printf("%s", COLOR_RESET);
+     vsnprintf(buf, sizeof buf, format, args);
      va_end(args);
+     tui_printf("%s%s%s", color, buf, COLOR_RESET);
  }
  
  void print_bold(const char* format, ...) {
+     char buf[4096];
      va_list args;
      va_start(args, format);
-     printf("%s", COLOR_BOLD);
-     vprintf(format, args);
-     printf("%s", COLOR_RESET);
+     vsnprintf(buf, sizeof buf, format, args);
      va_end(args);
+     tui_printf("%s%s%s", COLOR_BOLD, buf, COLOR_RESET);
  }
  
  void print_centered(const char* text) {
-     int width = 80;
-     int padding = (width - (int)strlen(text)) / 2;
+     int width = 76;
+     int sw = tui_strwidth(text);
+     int padding = (width - sw) / 2;
      if (padding < 0) padding = 0;
      printf("%*s%s\n", padding, "", text);
  }
  
  void draw_separator() {
-     printf(COLOR_CYAN "═══════════════════════════════════════════════════════════════════════\n" COLOR_RESET);
+     int i;
+     printf(COLOR_BLUE);
+     for (i = 0; i < 72; i++) printf("─");
+     printf("\n" COLOR_RESET);
  }
  
  void draw_double_separator() {
-     printf(COLOR_YELLOW "═══════════════════════════════════════════════════════════════════════\n" COLOR_RESET);
+     int i;
+     printf(COLOR_YELLOW);
+     for (i = 0; i < 72; i++) printf("═");
+     printf("\n" COLOR_RESET);
  }
  
+ /* v5.0: 标题不再打印成文本，而是接管 TUI 面板标题栏 */
  void draw_box(const char* title) {
-     printf("\n");
-     draw_double_separator();
-     print_centered(title);
-     draw_double_separator();
+     const char* t = title;
+     if (t && t[0] == '?' && t[1] == '?') { t += 2; while (*t == ' ') t++; }
+     tui_stream_reset();
+     tui_stream_set_title(t ? t : "");
      printf("\n");
  }
  
+/*==============================================================================
+ *  v5.0 TUI 页面框架
+ *  —— 顶栏 / 状态侧栏 / 内容面板 / 按键栏
+ *  —— 老的 printf 页面会被捕获进内容面板，实现"零改动接入"
+ *============================================================================*/
+#define SB_W 27
+
+static char g_page_title[128] = "主菜单";
+static int  g_tui_selftest = 0;
+static int  g_page_scrollable = 1;
+static const char* TUI_KEYS_DEFAULT =
+    " [方向键] 选择   [回车] 确认   [Esc] 返回   [数字] 快选 ";
+
+/* ---- 股票实时走势缓冲 ---- */
+#define TREND_MAX 160
+static int g_trend[25][TREND_MAX];
+static int g_trend_n = 0;
+
+/* 千分位金额 */
+static void tui_fmt_money(char* out, int cap, long long v)
+{
+    char tmp[32];
+    int i, len, t = 0, neg = v < 0;
+    if (cap < 2) return;
+    if (neg) v = -v;
+    snprintf(tmp, sizeof tmp, "%lld", v);
+    len = (int)strlen(tmp);
+    if (neg) out[t++] = '-';
+    for (i = 0; i < len && t < cap - 1; i++) {
+        if (i > 0 && (len - i) % 3 == 0 && t < cap - 1) out[t++] = ',';
+        out[t++] = tmp[i];
+    }
+    out[t] = 0;
+}
+
+static const char* tui_season_str(void)
+{
+    static const char* n[4] = { "春", "夏", "秋", "冬" };
+    int s = (int)player.current_season;
+    if (s < 0 || s > 3) s = 0;
+    return n[s];
+}
+
+/* 坤城指数：25 支股票均价的十倍 */
+static int tui_stock_index(void)
+{
+    int i, sum = 0;
+    for (i = 0; i < 25; i++) sum += player.stocks[i].current_price;
+    return sum * 10 / 25;
+}
+
+static void tui_trend_push(void)
+{
+    int i;
+    if (g_trend_n < TREND_MAX) {
+        for (i = 0; i < 25; i++) g_trend[i][g_trend_n] = player.stocks[i].current_price;
+        g_trend_n++;
+    } else {
+        for (i = 0; i < 25; i++) {
+            memmove(&g_trend[i][0], &g_trend[i][1], (TREND_MAX - 1) * sizeof(int));
+            g_trend[i][TREND_MAX - 1] = player.stocks[i].current_price;
+        }
+    }
+}
+
+/* 从 stock_history.dat 装载最近 TREND_MAX 条 */
+#define TREND_FILL 45   /* 历史不足时回填到这个长度，保证图表有基线 */
+
+static void tui_trend_load(void)
+{
+    FILE* f = fopen(STOCK_HISTORY_FILE, "rb");
+    long sz, rec_sz = 8 + 25 * 4;
+    int cnt, start, i, k;
+    long long ts;
+    int p[25];
+
+    g_trend_n = 0;
+    if (f) {
+        fseek(f, 0, SEEK_END);
+        sz = ftell(f);
+        cnt = (int)(sz / rec_sz);
+        start = cnt > TREND_MAX ? cnt - TREND_MAX : 0;
+        fseek(f, (long)start * rec_sz, SEEK_SET);
+        for (i = start; i < cnt && g_trend_n < TREND_MAX; i++) {
+            if (fread(&ts, 8, 1, f) != 1) break;
+            if (fread(p, 4, 25, f) != 25) break;
+            for (k = 0; k < 25; k++)
+                g_trend[k][g_trend_n] = (p[k] > 0 && p[k] < 100000) ? p[k] : player.stocks[k].current_price;
+            g_trend_n++;
+        }
+        fclose(f);
+    }
+
+    /* 历史太短就用当前价回填，避免图表只有一根针或被脏数据拉爆 Y 轴 */
+    if (g_trend_n < TREND_FILL) {
+        int need = TREND_FILL - g_trend_n;
+        for (i = g_trend_n - 1; i >= 0; i--)
+            for (k = 0; k < 25; k++) g_trend[k][i + need] = g_trend[k][i];
+        for (i = 0; i < need; i++)
+            for (k = 0; k < 25; k++) {
+                int p0 = player.stocks[k].current_price;
+                g_trend[k][i] = p0 * (94 + rand() % 13) / 100;
+                if (g_trend[k][i] < 10) g_trend[k][i] = 10;
+            }
+        g_trend_n = TREND_FILL;
+    }
+}
+
+/* 把当前价整体追加一条历史 */
+static void tui_trend_save(void)
+{
+    FILE* f = fopen(STOCK_HISTORY_FILE, "ab");
+    long long ts;
+    int p[25], i;
+    if (!f) return;
+    ts = (long long)time(NULL);
+    for (i = 0; i < 25; i++) p[i] = player.stocks[i].current_price;
+    fwrite(&ts, 8, 1, f);
+    fwrite(p, 4, 25, f);
+    fclose(f);
+}
+
+/* 实时行情跳动：温和随机游走 + 均值回归 */
+static void tui_stock_live_tick(void)
+{
+    int i;
+    for (i = 0; i < 25; i++) {
+        Stock* s = &player.stocks[i];
+        int d = (rand() % 3) - 1;
+        if (s->volatility >= 12 && (rand() % 3) == 0) d *= 2;
+        if (s->current_price > s->base_price * 3 / 2) d -= 1;
+        if (s->current_price < s->base_price * 2 / 3) d += 1;
+        s->current_price += d;
+        if (s->current_price < 10) s->current_price = 10;
+        if (s->current_price > 99999) s->current_price = 99999;
+        s->price_change = d;
+    }
+    tui_trend_push();
+}
+
+/* ---- 顶栏 ---- */
+static void tui_draw_topbar(void)
+{
+    int w = tui_cv.w;
+    char right[160];
+    int sw;
+
+    tc_fill(0, 0, w, 1, " ", TC_DIM, TC_BG3);
+    tc_puts(2, 0, "坤城", TC_YELLOW, TC_BG3);
+    tc_puts(6, 0, "打工模拟器", TC_WHITE, TC_BG3);
+    tc_puts(17, 0, "v5.0", TC_FAINT, TC_BG3);
+
+    snprintf(right, sizeof right, "第 %d 天 · %s季 · 声望 %d ",
+             player.day_count, tui_season_str(), player.prestige_level);
+    sw = tui_strwidth(right);
+    if (w - sw - 2 > 20) tc_puts(w - sw - 2, 0, right, TC_CYAN, TC_BG3);
+}
+
+/* ---- 侧栏：一行属性 ---- */
+static void tui_side_stat(int x, int y, const char* label, int v, int max,
+                          int lo, int mid, int hi)
+{
+    char val[16];
+    tc_puts(x, y, label, TC_DIM, TC_BG2);
+    tc_bar(x + 5, y, 11, v, max, lo, mid, hi, TC_BG2);
+    snprintf(val, sizeof val, "%3d", v > 999 ? 999 : v);
+    tc_puts(x + 17, y, val, TC_WHITE, TC_BG2);
+}
+
+/* ---- 侧栏 ---- */
+static void tui_draw_sidebar(int y, int h)
+{
+    int cx = 2, cy = y + 1;
+    char buf[64];
+    int bx;
+
+    tc_panel(0, y, SB_W, h, "档案", TC_BORDER, TC_BG2, TC_YELLOW);
+    if (h < 12) return;
+
+    /* 姓名 / 等级 */
+    tc_putsn(cx, cy, SB_W - 13, player.player_name[0] ? player.player_name : "无名氏", TC_WHITE, TC_BG2);
+    snprintf(buf, sizeof buf, "Lv.%d", player.level);
+    tc_puts(SB_W - 3 - tui_strwidth(buf), cy, buf, TC_YELLOW, TC_BG2);
+    cy++;
+
+    /* 坤币 */
+    tc_puts(cx, cy, "坤币", TC_DIM, TC_BG2);
+    tui_fmt_money(buf, sizeof buf, (long long)player.kun_coins);
+    tc_puts(cx + 5, cy, buf, player.kun_coins < 0 ? TC_RED : TC_GREEN, TC_BG2);
+    cy++;
+
+    /* 时间槽 */
+    tc_puts(cx, cy, "时间", TC_DIM, TC_BG2);
+    {
+        const char* sn[3] = { "上", "下", "晚" };
+        for (bx = 0; bx < player.max_time_slots && bx < 3; bx++)
+            tc_put(cx + 5 + bx * 3, cy, sn[bx],
+                   bx < player.daily_time_slots ? TC_GREEN : TC_FAINT, TC_BG2);
+    }
+    cy++;
+
+    /* 分隔 */
+    tc_hline(cx, cy, SB_W - 4, TC_BG3, TC_BG2);
+    cy++;
+
+    /* 属性条 */
+    tui_side_stat(cx, cy++, "饱食", player.hunger, 100, TC_RED, TC_YELLOW, TC_GREEN);
+    tui_side_stat(cx, cy++, "血量", player.health, 100, TC_RED, TC_YELLOW, TC_GREEN);
+    tui_side_stat(cx, cy++, "精神", player.spirit, 100, TC_RED, TC_CYAN, TC_MAGENTA);
+    {
+        int em = player.level * 100;
+        if (em <= 0) em = 100;
+        tc_puts(cx, cy, "经验", TC_DIM, TC_BG2);
+        tc_bar(cx + 5, cy, 11, player.kun_exp, em, TC_BLUE, TC_BLUE, TC_CYAN, TC_BG2);
+        snprintf(buf, sizeof buf, "%3d%%", (int)((long long)player.kun_exp * 100 / em));
+        tc_puts(cx + 17, cy, buf, TC_CYAN, TC_BG2);
+        cy++;
+    }
+
+    /* 状态徽章 */
+    if (cy < y + h - 6) {
+        tc_hline(cx, cy, SB_W - 4, TC_BG3, TC_BG2);
+        cy++;
+        bx = cx;
+        if (player.is_hallucinating) { tc_puts(bx, cy, "幻觉", TC_MAGENTA, TC_BG2); bx += 5; }
+        if (player.hunger < 20 && bx < SB_W - 6) { tc_puts(bx, cy, "饥饿", TC_RED, TC_BG2); bx += 5; }
+        if (player.health < 30 && bx < SB_W - 6) { tc_puts(bx, cy, "重伤", TC_RED, TC_BG2); bx += 5; }
+        if (player.spirit < 20 && bx < SB_W - 6) { tc_puts(bx, cy, "崩溃", TC_ORANGE, TC_BG2); bx += 5; }
+        if (player.daily_time_slots <= 0 && bx < SB_W - 6) { tc_puts(bx, cy, "力竭", TC_YELLOW, TC_BG2); }
+        cy++;
+    }
+
+    /* 资产概览 */
+    if (cy + 6 < y + h) {
+        char ab[96];
+        tc_hline(cx, cy, SB_W - 4, TC_BG3, TC_BG2);
+        cy++;
+        {
+            int ach = 0, i2, stk = 0;
+            for (i2 = 0; i2 < MAX_ACHIEVEMENTS; i2++)
+                if (player.achievements[i2].unlocked) ach++;
+            for (i2 = 0; i2 < 25; i2++) stk += player.invested_stocks[i2];
+
+            snprintf(ab, sizeof ab, "房产 %d · 宠物 %d", player.property_count, player.pet_count);
+            tc_putsn(cx, cy, SB_W - 5, ab, TC_DIM, TC_BG2); cy++;
+            if (cy < y + h) {
+                snprintf(ab, sizeof ab, "成就 %d/%d · 点 %d", ach, MAX_ACHIEVEMENTS, player.skill_points);
+                tc_putsn(cx, cy, SB_W - 5, ab, TC_DIM, TC_BG2); cy++;
+            }
+            if (cy < y + h) {
+                snprintf(ab, sizeof ab, "公司 Lv.%d · 持股 %d", player.current_company_level + 1, stk);
+                tc_putsn(cx, cy, SB_W - 5, ab, TC_DIM, TC_BG2); cy++;
+            }
+        }
+        cy++;
+    }
+
+    /* 坤城指数迷你走势 */
+    if (cy + 4 < y + h && g_trend_n > 1) {
+        int idx[TREND_MAX], i;
+        tc_puts(cx, cy, "坤城指数", TC_DIM, TC_BG2);
+        snprintf(buf, sizeof buf, "%5d", tui_stock_index());
+        tc_puts(cx + 9, cy, buf, TC_YELLOW, TC_BG2);
+        cy++;
+        for (i = 0; i < g_trend_n; i++) {
+            int k, s = 0;
+            for (k = 0; k < 25; k++) s += g_trend[k][i];
+            idx[i] = s * 10 / 25;
+        }
+        tc_spark(cx, cy, SB_W - 5, idx, g_trend_n, idx[0], TC_RED, TC_GREEN, TC_BG2);
+        cy++;
+    }
+}
+
+/* ---- 内容面板 ---- */
+static void tui_draw_content(void)
+{
+    int cy = 1;
+    int ch = tui_cv.h - 3;
+    int cx = SB_W + 1;
+    int cw = tui_cv.w - cx - 1;
+
+    if (cw < 34) { cx = 0; cw = tui_cv.w; }
+    if (ch < 4) ch = 4;
+
+    tc_panel(cx, cy, cw, ch, g_page_title, TC_BORDER, TC_BG2, TC_CYAN);
+    tui_stream_flush(cx + 2, cy + 1, cw - 4, ch - 2, g_page_scrollable);
+}
+
+/* ---- 底部两条 ---- */
+static void tui_draw_keybar(const char* keys)
+{
+    int y = tui_cv.h - 2;
+    int w = tui_cv.w;
+    if (y < 1) return;
+    tc_fill(0, y, w, 1, " ", TC_DIM, TC_BG3);
+    if (keys) tc_putsn(1, y, w - 2, keys, TC_DIM, TC_BG3);
+    tc_fill(0, y + 1, w, 1, " ", TC_DIM, TC_BG);
+}
+
+/* ---- 整页 ---- */
+static void tui_draw_page(const char* keys)
+{
+    if (tui_s_title[0]) {
+        strncpy(g_page_title, tui_s_title, sizeof g_page_title - 1);
+        g_page_title[sizeof g_page_title - 1] = 0;
+    }
+    tui_begin();
+    tui_draw_topbar();
+    tui_draw_sidebar(1, tui_cv.h - 3);
+    tui_draw_content();
+    tui_draw_keybar(keys ? keys : TUI_KEYS_DEFAULT);
+}
+
+/* 进入一个 TUI 子页 */
+static void tui_page_enter(const char* title)
+{
+    tui_stream_reset();
+    tui_stream_set_title(title ? title : "");
+    strncpy(g_page_title, title ? title : "", sizeof g_page_title - 1);
+    g_page_title[sizeof g_page_title - 1] = 0;
+    g_page_scrollable = 1;
+}
+
+/* 让 draw_box / CLEAR_SCREEN 设置的标题同步到面板 */
+static void tui_sync_title(void)
+{
+    if (tui_s_title[0]) {
+        strncpy(g_page_title, tui_s_title, sizeof g_page_title - 1);
+        g_page_title[sizeof g_page_title - 1] = 0;
+    }
+}
+
+
  int get_valid_input(int min, int max) {
-     int input;
-     char buffer[100];
-     while (1) {
-         printf("请输入选项 (%d-%d): ", min, max);
-         if (fgets(buffer, sizeof(buffer), stdin) == NULL) {
-             continue;
-         }
-         if (sscanf(buffer, "%d", &input) != 1) {
-             printf("输入无效，请输入数字！\n");
-             continue;
-         }
-         if (input < min || input > max) {
-             printf("请输入%d到%d之间的数字！\n", min, max);
-             continue;
-         }
-         return input;
-     }
+     char label[112];
+     int v = min;
+     tui_sync_title();
+     tui_draw_page(NULL);
+     tui_present();
+     snprintf(label, sizeof label, "输入 [%d-%d] ›", min, max);
+     if (tui_input_int(tui_cv.h - 1, tui_cv.w, label, min, max, &v) < 0) return min;
+     return v;
  }
  
  int get_valid_input_with_cancel(int min, int max, int cancel_code) {
-     int input;
-     char buffer[100];
-     while (1) {
-         printf("请输入选项 (%d-%d, %d取消): ", min, max, cancel_code);
-         if (fgets(buffer, sizeof(buffer), stdin) == NULL) {
-             continue;
-         }
-         if (sscanf(buffer, "%d", &input) != 1) {
-             printf("输入无效，请输入数字！\n");
-             continue;
-         }
-         if (input == cancel_code) {
-             return cancel_code;
-         }
-         if (input < min || input > max) {
-             printf("请输入%d到%d之间的数字！\n", min, max);
-             continue;
-         }
-         return input;
-     }
+     char label[128];
+     int v = min;
+     tui_sync_title();
+     tui_draw_page(NULL);
+     tui_present();
+     snprintf(label, sizeof label, "输入 [%d-%d] · %d取消 ›", min, max, cancel_code);
+     if (tui_input_int(tui_cv.h - 1, tui_cv.w, label, min, max, &v) < 0) return cancel_code;
+     return v;
  }
  
+ /* v5.0: 按任意键 —— 支持 PgUp/PgDn 翻阅长页面 */
  void press_any_key() {
-     printf("\n" COLOR_GREEN "按任意键继续..." COLOR_RESET);
-     _getch();
-     printf("\n");
+     int k;
+     if (g_tui_selftest) return;
+     tui_sync_title();
+     for (;;) {
+         tui_draw_page(" [PgUp/PgDn] 翻阅   [任意其他键] 继续 ");
+         tui_pause(tui_cv.h - 1, tui_cv.w, "按任意键继续");
+         k = tui_key();
+         if (k == TK_PGUP) { tui_s_off += (tui_cv.h - 8); continue; }
+         if (k == TK_PGDN) { tui_s_off -= (tui_cv.h - 8); if (tui_s_off < 0) tui_s_off = 0; continue; }
+         break;
+     }
  }
  
  void show_skills() {
      CLEAR_SCREEN();
-     draw_box("?? 技能系统");
+     draw_box("技能系统");
      
      printf("可用技能点：%d\n\n", player.skill_points);
      
@@ -672,27 +1019,32 @@ void enable_ansi() {
      if (choice > 0) {
          upgrade_skill(choice - 1);
          printf("\n");
-         system("pause");
+         press_any_key();
      }
  }
  
  void show_loading_screen(int duration) {
-     CLEAR_SCREEN();
-     print_centered("打工模拟器 v4.0 - 坤城篇");
-     printf("\n\n");
-     print_centered("加载中...");
-     printf("\n    ");
-     
-     for (int i = 0; i < 50; i++) {
-         printf(COLOR_GREEN "█" COLOR_RESET);
-         fflush(stdout);
- #ifdef _WIN32
-         Sleep(duration / 50);
- #else
-         usleep((duration * 1000) / 50);
- #endif
+     int i, steps = 36;
+     int w = tui_cv.w, h = tui_cv.h;
+     int barw = (w > 70) ? 60 : w - 12;
+     int cx = (w - barw) / 2;
+     int cy = h / 2 - 4;
+
+     for (i = 0; i <= steps; i++) {
+         tui_begin();
+         tc_puts_center(0, cy, w, "坤  城", TC_YELLOW, TC_BG);
+         tc_puts_center(0, cy + 1, w, "打 工 模 拟 器", TC_WHITE, TC_BG);
+         tc_puts_center(0, cy + 2, w, "v5.0  ·  TUI EDITION", TC_CYAN, TC_BG);
+         tc_bar(cx, cy + 4, barw, i, steps, TC_CYAN, TC_CYAN, TC_CYAN, TC_BG);
+         if (i >= steps) {
+             tc_puts_center(0, cy + 6, w, "先找份活干，活过这个月。", TC_DIM, TC_BG);
+         } else {
+             tc_puts_center(0, cy + 6, w, "正在载入坤城……", TC_FAINT, TC_BG);
+         }
+         tui_present();
+         tui_sleep_ms(duration / steps);
      }
-     printf("\n\n");
+     tui_sleep_ms(260);
  }
  
  void print_progress_bar(int current, int max, int width) {
@@ -702,7 +1054,7 @@ void enable_ansi() {
          if (i < filled) {
              printf(COLOR_GREEN "█" COLOR_RESET);
          } else {
-             printf("?");
+             printf(COLOR_BLUE "-" COLOR_RESET);
          }
      }
      printf("] %d/%d", current, max);
@@ -721,7 +1073,7 @@ void enable_ansi() {
          // 触发福利：如果超过4294967296，变成500000000
          if (player.kun_coins >= 4294967296LL) {
              print_colored(COLOR_YELLOW, "\n?? 检测到坤币异常！触发福利系统...\n");
-             print_colored(COLOR_MAGENTA, "?? 福利：坤币调整为 500,000,000\n");
+             print_colored(COLOR_MAGENTA, "福利：坤币调整为 500,000,000\n");
              player.kun_coins = 500000000LL;
              return true;
          }
@@ -849,7 +1201,7 @@ void enable_ansi() {
              if (player.consecutive_days % 7 == 0) {
                  add_coins(500LL);
                  player.lottery_tickets++;
-                 print_colored(COLOR_MAGENTA, "?? 连续登录 %d 天奖励：额外获得 500 坤币和 1 张彩票！\n", 
+                 print_colored(COLOR_MAGENTA, "连续登录 %d 天奖励：额外获得 500 坤币和 1 张彩票！\n", 
                               player.consecutive_days);
              }
              
@@ -1389,12 +1741,22 @@ void init_pets() {
  }
  
 void init_stocks() {
-    // 坤城股票市场 —— 5支代表性股票
-    const char* stock_names[] = {"坤坤科技", "外卖速递", "坤城地产", "坤能集团", "星光传媒"};
-    int base_prices[] = {100, 50, 200, 150, 80};
-    int volatilities[] = {10, 15, 8, 12, 20};
-     
-     for (int i = 0; i < 5; i++) {
+    // 坤城股票市场 —— 25支代表性股票
+    const char* stock_names[] = {
+        "坤坤科技", "外卖速递", "坤城地产", "坤能集团", "星光传媒",
+        "坤城银行", "大江医药", "天虹通信", "龙腾制造", "碧水环保",
+        "烈火能源", "青云教育", "金盾安保", "风驰物流", "华美百货",
+        "北斗导航", "南山旅游", "星辰半导体", "绿野农业", "白鲸渔业",
+        "九鼎建筑", "天机软件", "凤凰传媒", "云梦游戏", "紫金矿业"
+    };
+    int base_prices[] = {100, 50, 200, 150, 80, 120, 90, 180, 70, 60,
+                         110, 40, 160, 85, 75, 250, 95, 300, 45, 55,
+                         140, 220, 130, 170, 105};
+    int volatilities[] = {10, 15, 8, 12, 20, 9, 11, 14, 16, 7,
+                          13, 18, 6, 17, 19, 5, 10, 22, 25, 14,
+                          8, 16, 12, 21, 9};
+    
+    for (int i = 0; i < 25; i++) {
          safe_strcpy(player.stocks[i].name, stock_names[i], 50);
          player.stocks[i].base_price = base_prices[i];
          player.stocks[i].current_price = base_prices[i];
@@ -1703,11 +2065,11 @@ void process_od_offer(int chatter_index) {
     if (player.chatters[chatter_index].type != CHATTER_BLACKMARKET) return;
     
     CLEAR_SCREEN();
-    draw_box("?? 坤城暗巷");
+    draw_box("坤城暗巷");
     
-    print_colored(COLOR_RED, "?? %s 向你发来了一条加密消息...\n", player.chatters[chatter_index].name);
+    print_colored(COLOR_RED, "%s 向你发来了一条加密消息...\n", player.chatters[chatter_index].name);
     printf("\n");
-    print_colored(COLOR_RED, "?? \"有好东西。试一口，什么烦恼都没了。\"\n");
+    print_colored(COLOR_RED, "\"有好东西。试一口，什么烦恼都没了。\"\n");
     printf("\n");
     print_colored(COLOR_YELLOW, "1. 同意尝试（进入幻觉状态，高风险）\n");
     print_colored(COLOR_GREEN, "2. 拒绝（坚守底线）\n");
@@ -1718,7 +2080,7 @@ void process_od_offer(int chatter_index) {
      if (choice == 1) {
          // 同意OD
          print_colored(COLOR_RED, "\n?? 你尝试了对方给的东西...\n");
-         print_colored(COLOR_MAGENTA, "?? 意识开始模糊...\n");
+         print_colored(COLOR_MAGENTA, "意识开始模糊...\n");
          
          player.spirit = 10;
          player.hunger = 100;
@@ -1737,8 +2099,8 @@ void process_od_offer(int chatter_index) {
          // 检查猝死
          if (rand() % 100 < player.sudden_death_chance) {
              print_colored(COLOR_RED, "\n??? 你突然感到心脏剧痛...\n");
-             print_colored(COLOR_RED, "??? 游戏结束！\n");
-             print_colored(COLOR_YELLOW, "??? 可以通过存档恢复...\n");
+             print_colored(COLOR_RED, "游戏结束！\n");
+             print_colored(COLOR_YELLOW, "可以通过存档恢复...\n");
              
              // 重置玩家（模拟从存档恢复）
              printf("\n正在从存档恢复...\n");
@@ -1760,11 +2122,11 @@ void process_tongcheng_offer(int chatter_index) {
     if (player.chatters[chatter_index].type != CHATTER_TONGCHENG) return;
     
     CLEAR_SCREEN();
-    draw_box("?? 坤城之夜");
+    draw_box("坤城之夜");
     
-    print_colored(COLOR_MAGENTA, "?? %s 发来了一条私信...\n", player.chatters[chatter_index].name);
+    print_colored(COLOR_MAGENTA, "%s 发来了一条私信...\n", player.chatters[chatter_index].name);
     printf("\n");
-    print_colored(COLOR_MAGENTA, "?? \"今晚有空吗？一个人在这座城市挺孤单的……\"\n");
+    print_colored(COLOR_MAGENTA, "\"今晚有空吗？一个人在这座城市挺孤单的……\"\n");
     printf("\n");
     print_colored(COLOR_YELLOW, "1. 同意见面\n");
     print_colored(COLOR_GREEN, "2. 礼貌拒绝\n");
@@ -1774,7 +2136,7 @@ void process_tongcheng_offer(int chatter_index) {
      
     if (choice == 1) {
         print_colored(COLOR_MAGENTA, "\n?? 坤城的夜晚灯火通明……\n");
-        print_colored(COLOR_CYAN, "?? 有人在身边，这座城市的孤独感好像淡了一点。\n");
+        print_colored(COLOR_CYAN, "有人在身边，这座城市的孤独感好像淡了一点。\n");
         
         player.spirit = 78;
         player.health = 99;
@@ -2037,7 +2399,7 @@ void process_tongcheng_offer(int chatter_index) {
      char bak_name[256];
      snprintf(bak_name, sizeof(bak_name), "%s.bak", SAVE_FILE);
      rename(SAVE_FILE, bak_name);
-     print_colored(COLOR_GREEN, "?? 旧存档已备份为 %s\n", bak_name);
+     print_colored(COLOR_GREEN, "旧存档已备份为 %s\n", bak_name);
  }
  
  void load_game() {
@@ -2466,7 +2828,7 @@ void load_forbes_ranking() {
 
                  for (int i = 0; i < forbes_count; i++) {
                      if (strcmp(forbes_list[i].player_name, player.player_name) == 0) {
-                         print_colored(COLOR_GREEN, "  福布斯排名: 第 %d 名 (共 %d 名玩家)\n", i + 1, forbes_count);
+                         print_colored(COLOR_GREEN, "  福布斯排名: 第 %d 名（共 %d 名玩家）\n", i + 1, forbes_count);
                          break;
                      }
                  }
@@ -2638,14 +3000,14 @@ void show_active_events() {
          if (now - last_effect > 30) { // 每30秒检查一次
              last_effect = now;
              print_colored(COLOR_YELLOW, "\n?? 你感到异常兴奋！\n");
-             print_colored(COLOR_RED, "?? 警告：过度兴奋可能危及生命！\n");
+             print_colored(COLOR_RED, "警告：过度兴奋可能危及生命！\n");
              
              // 猝死风险
              int risk = (player.spirit - 78) * 2;
              if (rand() % 100 < risk) {
                  print_colored(COLOR_RED, "\n??? 你的心脏承受不了这种刺激...\n");
-                 print_colored(COLOR_RED, "??? 游戏结束！\n");
-                 print_colored(COLOR_YELLOW, "??? 从存档恢复...\n");
+                 print_colored(COLOR_RED, "游戏结束！\n");
+                 print_colored(COLOR_YELLOW, "从存档恢复...\n");
                  load_game();
              }
          }
@@ -2701,7 +3063,7 @@ void recover_health() {
                 player.health -= 5;
                 if (player.health < 0) player.health = 0;
             } else if (player.hunger < 20) {
-                print_colored(COLOR_RED, "? 你非常饥饿！快去买食物！\n");
+                print_colored(COLOR_RED, "你非常饥饿！快去买食物！\n");
             }
         }
         
@@ -2717,7 +3079,7 @@ void recover_health() {
  
  void buy_food() {
      CLEAR_SCREEN();
-     draw_box("?? 购买食物");
+     draw_box("购买食物");
      
      printf("可购买的食物：\n");
      printf("1. 面包 - 10坤币（恢复15饱食度）\n");
@@ -2733,27 +3095,27 @@ void recover_health() {
              if (remove_coins(10)) {
                  player.hunger += 15;
                  if (player.hunger > 100) player.hunger = 100;
-                 print_colored(COLOR_GREEN, "? 购买了面包，饱食度+15\n");
+                 print_colored(COLOR_GREEN, "购买了面包，饱食度+15\n");
              } else {
-                 print_colored(COLOR_RED, "? 坤币不足！\n");
+                 print_colored(COLOR_RED, "坤币不足！\n");
              }
              break;
          case 2:
              if (remove_coins(30)) {
                  player.hunger += 30;
                  if (player.hunger > 100) player.hunger = 100;
-                 print_colored(COLOR_GREEN, "? 购买了盒饭，饱食度+30\n");
+                 print_colored(COLOR_GREEN, "购买了盒饭，饱食度+30\n");
              } else {
-                 print_colored(COLOR_RED, "? 坤币不足！\n");
+                 print_colored(COLOR_RED, "坤币不足！\n");
              }
              break;
          case 3:
              if (remove_coins(100)) {
                  player.hunger += 60;
                  if (player.hunger > 100) player.hunger = 100;
-                 print_colored(COLOR_GREEN, "? 购买了大餐，饱食度+60\n");
+                 print_colored(COLOR_GREEN, "购买了大餐，饱食度+60\n");
              } else {
-                 print_colored(COLOR_RED, "? 坤币不足！\n");
+                 print_colored(COLOR_RED, "坤币不足！\n");
              }
              break;
          default:
@@ -2765,7 +3127,7 @@ void recover_health() {
  
  void eat_food() {
      CLEAR_SCREEN();
-     draw_box("?? 背包食物");
+     draw_box("背包食物");
      
      // 查找食物物品
      int food_indices[10];
@@ -2807,7 +3169,7 @@ void recover_health() {
              player.inventory_count--;
          }
          
-         print_colored(COLOR_GREEN, "? 食用了 %s，饱食度+%d\n", item->name, item->effect_value);
+         print_colored(COLOR_GREEN, "食用了 %s，饱食度+%d\n", item->name, item->effect_value);
          press_any_key();
      }
  }
@@ -2831,8 +3193,8 @@ void random_accident() {
         
         if (player.health <= 0) {
             print_colored(COLOR_RED, "\n??? 你在坤城的街头倒下了……\n");
-            print_colored(COLOR_YELLOW, "??? 好在被人及时发现，送进了医院。\n");
-            print_colored(COLOR_GREEN, "?? 从最近的存档恢复……\n");
+            print_colored(COLOR_YELLOW, "好在被人及时发现，送进了医院。\n");
+            print_colored(COLOR_GREEN, "从最近的存档恢复……\n");
             load_game();
         }
     }
@@ -2851,15 +3213,15 @@ void random_accident() {
  //================ 聊天室功能 ================
 void show_phone_menu() {
     if (!player.has_phone) {
-        print_colored(COLOR_RED, "? 你还没有手机！\n");
-        print_colored(COLOR_YELLOW, "? 可以在商城中购买手机。\n");
+        print_colored(COLOR_RED, "你还没有手机！\n");
+        print_colored(COLOR_YELLOW, "可以在商城中购买手机。\n");
         press_any_key();
         return;
     }
     
     while (1) {
         CLEAR_SCREEN();
-        draw_box("?? 手机");
+        draw_box("手机");
         
         printf("1. 进入聊天室\n");
         printf("2. 查看聊天记录\n");
@@ -2874,7 +3236,7 @@ void show_phone_menu() {
                 break;
             case 2:
                 CLEAR_SCREEN();
-                draw_box("?? 聊天记录");
+                draw_box("聊天记录");
                 show_chat_messages();
                 press_any_key();
                 break;
@@ -2917,7 +3279,7 @@ void show_chat_room() {
     
     while (1) {
         CLEAR_SCREEN();
-        draw_box("?? 聊天室");
+        draw_box("聊天室");
         
         // 显示在线人数
         int online = 0;
@@ -2970,7 +3332,7 @@ void show_chat_room() {
             }
         }
         if (strlen(input) == 0 || all_spaces) {
-            add_chat_message("系统", "? 不能发送空白消息！", CHATTER_NORMAL);
+            add_chat_message("系统", "不能发送空白消息！", CHATTER_NORMAL);
             continue;
         }
         
@@ -2989,7 +3351,7 @@ void show_chat_room() {
                     if (player.kun_coins >= 100) {
                         player.kun_coins -= 100;
                         add_chat_message(player.chatters[waiting_for_agreement].name, "哈哈，谢谢你的100坤币！你真是个好人~", type);
-                        print_colored(COLOR_RED, "? 你被骗子骗了100坤币！\n");
+                        print_colored(COLOR_RED, "你被骗子骗了100坤币！\n");
                     } else {
                         add_chat_message(player.chatters[waiting_for_agreement].name, "哼，没钱还说什么同意？滚！", type);
                     }
@@ -3011,7 +3373,7 @@ void show_chat_room() {
                 press_any_key();
                 continue;
             } else {
-                add_chat_message("系统", "? 请输入 同意 或 拒绝", CHATTER_NORMAL);
+                add_chat_message("系统", "请输入 同意 或 拒绝", CHATTER_NORMAL);
                 continue;
             }
         }
@@ -3069,7 +3431,7 @@ void show_chat_room() {
                     }
                 }
             } else {
-                add_chat_message("系统", "? 格式错误：请使用 @用户名 内容", CHATTER_NORMAL);
+                add_chat_message("系统", "格式错误：请使用 @用户名 内容", CHATTER_NORMAL);
             }
         } else {
             // 随机AI回复（10%概率）
@@ -3196,7 +3558,7 @@ void show_chat_room() {
  
  void show_achievements() {
      CLEAR_SCREEN();
-     draw_box("?? 成就系统");
+     draw_box("成就系统");
      
      int unlocked_count = 0;
      for (int i = 0; i < MAX_ACHIEVEMENTS; i++) {
@@ -3220,7 +3582,7 @@ void show_chat_room() {
      print_colored(COLOR_CYAN, "\n=== 未解锁成就 ===\n");
      for (int i = 0; i < MAX_ACHIEVEMENTS; i++) {
          if (!player.achievements[i].unlocked) {
-             printf("? %s\n", player.achievements[i].name);
+             printf("%s\n", player.achievements[i].name);
              printf("   %s\n", player.achievements[i].description);
          }
      }
@@ -3232,10 +3594,25 @@ void show_chat_room() {
  }
  
  //================ 股票市场更新 ================
- void update_stock_prices() {
+void save_stock_history() {
+    // 将当前所有股票价格追加到历史记录文件
+    ensure_dir(SAVE_DIR);
+    FILE* fp = fopen(STOCK_HISTORY_FILE, "ab");
+    if (!fp) return;
+    time_t now = time(NULL);
+    fwrite(&now, sizeof(time_t), 1, fp);
+    int prices[25];
+    for (int i = 0; i < 25; i++) {
+        prices[i] = player.stocks[i].current_price;
+    }
+    fwrite(prices, sizeof(int), 25, fp);
+    fclose(fp);
+}
+
+void update_stock_prices() {
      time_t now = time(NULL);
-     for (int i = 0; i < 5; i++) {
-         if (now - player.stocks[i].last_update >= 60) {
+    for (int i = 0; i < 25; i++) {
+        if (now - player.stocks[i].last_update >= 60) {
              int change = (rand() % (player.stocks[i].volatility * 2 + 1)) - player.stocks[i].volatility;
              player.stocks[i].current_price += change;
              if (player.stocks[i].current_price < 10) player.stocks[i].current_price = 10;
@@ -3243,6 +3620,7 @@ void show_chat_room() {
              player.stocks[i].last_update = now;
          }
      }
+     save_stock_history();
  }
  
  //================ 被动收入计算 ================
@@ -3357,7 +3735,7 @@ void trigger_work_micro_event(int task_index) {
     // 特殊处理：灰色请求（程序员任务）
     if (event->task_id == 4 && strstr(event->title, "灰色外包") != NULL) {
         printf("\n");
-        print_colored(COLOR_YELLOW, "?? 微事件——%s\n", event->title);
+        print_colored(COLOR_YELLOW, "微事件——%s\n", event->title);
         printf("   %s\n", event->description);
         printf("\n   1. 接受请求（报酬3000坤币，但事后良心不安）\n");
         printf("   2. 拒绝（程序员有底线）\n");
@@ -3380,7 +3758,7 @@ void trigger_work_micro_event(int task_index) {
     // 特殊处理：黑中介（通用事件，可能有撒谎选项）
     else if (strstr(event->title, "黑中介") != NULL) {
         printf("\n");
-        print_colored(COLOR_YELLOW, "?? 微事件——%s\n", event->title);
+        print_colored(COLOR_YELLOW, "微事件——%s\n", event->title);
         printf("   %s\n", event->description);
         printf("\n   1. 敷衍过去（\"我考虑考虑\"）\n");
         printf("   2. 直接拒绝\n");
@@ -3399,7 +3777,7 @@ void trigger_work_micro_event(int task_index) {
     // 特殊处理：遗落物品（出租车）
     else if (event->task_id == 0 && strstr(event->title, "遗落物品") != NULL) {
         printf("\n");
-        print_colored(COLOR_YELLOW, "?? 微事件——%s\n", event->title);
+        print_colored(COLOR_YELLOW, "微事件——%s\n", event->title);
         printf("   %s\n", event->description);
         printf("\n   1. 交给警察\n");
         printf("   2. 收下现金，不管那字条\n");
@@ -3421,7 +3799,7 @@ void trigger_work_micro_event(int task_index) {
     // 普通事件
     else {
         printf("\n");
-        print_colored(COLOR_YELLOW, "?? 微事件——%s\n", event->title);
+        print_colored(COLOR_YELLOW, "微事件——%s\n", event->title);
         printf("   %s\n", event->description);
         
         player.spirit += event->spirit_effect;
@@ -3461,7 +3839,7 @@ void show_daily_report() {
     CLEAR_SCREEN();
     
     char title_buf[100];
-    snprintf(title_buf, sizeof(title_buf), "?? 坤城日报 — 第 %d 天", player.day_count);
+    snprintf(title_buf, sizeof(title_buf), "坤城日报 — 第 %d 天", player.day_count);
     draw_box(title_buf);
     
     printf("\n");
@@ -3581,22 +3959,22 @@ void do_task(int task_index) {
             player.tasks_unlocked[task_index] = true;
             remove_coins(task->unlock_cost);
             player.total_expenses += task->unlock_cost;
-            print_colored(COLOR_GREEN, "?? 解锁新任务：%s！\n", task->name);
+            print_colored(COLOR_GREEN, "解锁新任务：%s！\n", task->name);
         } else {
-            print_colored(COLOR_RED, "? 需要 %d 坤币解锁此任务！\n", task->unlock_cost);
+            print_colored(COLOR_RED, "需要 %d 坤币解锁此任务！\n", task->unlock_cost);
             return;
         }
     }
     
     if (player.level < task->required_level) {
-        print_colored(COLOR_RED, "? 需要等级 %d 才能执行此任务！\n", task->required_level);
+        print_colored(COLOR_RED, "需要等级 %d 才能执行此任务！\n", task->required_level);
         return;
     }
     
     for (int i = 0; i < 3; i++) {
         if (task->required_skills[i] != SKILL_NONE) {
             if (player.skills[task->required_skills[i]].level < task->required_skill_level[i]) {
-                print_colored(COLOR_RED, "? 需要 %s 技能等级 %d！\n", 
+                print_colored(COLOR_RED, "需要 %s 技能等级 %d！\n", 
                            player.skills[task->required_skills[i]].name, 
                            task->required_skill_level[i]);
                 return;
@@ -3617,7 +3995,7 @@ void do_task(int task_index) {
     }
     
     if (player.daily_time_slots <= 0) {
-        print_colored(COLOR_RED, "? 今天的时间已经用完了！睡一觉明天再来吧。\n");
+        print_colored(COLOR_RED, "今天的时间已经用完了！睡一觉明天再来吧。\n");
         day_end();
         return;
     }
@@ -3625,7 +4003,7 @@ void do_task(int task_index) {
     // === v4.0 选择打工难度 ===
     printf("\n");
     draw_separator();
-    print_colored(COLOR_CYAN, "?? 选择打工模式：\n");
+    print_colored(COLOR_CYAN, "选择打工模式：\n");
     printf("  1. ?? 摸鱼 — 轻松安全，收入×0.6，消耗1时间槽\n");
     printf("  2. ?? 普通 — 标准模式，收入×1.0，消耗1时间槽\n");
     printf("  3. ?? 加班 — 高强度，收入×1.5，消耗2时间槽，健康-5\n");
@@ -3672,7 +4050,7 @@ void do_task(int task_index) {
     }
     
     if (player.daily_time_slots < diff_slot_cost) {
-        print_colored(COLOR_RED, "? 时间不够！需要 %d 个时间槽，当前剩余 %d 个。\n", 
+        print_colored(COLOR_RED, "时间不够！需要 %d 个时间槽，当前剩余 %d 个。\n", 
                       diff_slot_cost, player.daily_time_slots);
         return;
     }
@@ -3757,7 +4135,7 @@ void do_task(int task_index) {
         if (player.health <= 0) {
             player.health = 1;
             player.hallu_count++;
-            print_colored(COLOR_RED, "?? 你差点猝死在坤城的街头！幸运地捡回一条命...\n");
+            print_colored(COLOR_RED, "你差点猝死在坤城的街头！幸运地捡回一条命...\n");
         }
     }
     
@@ -3848,7 +4226,7 @@ void do_task(int task_index) {
     // 时间槽用完自动结算
     if (player.daily_time_slots <= 0) {
         printf("\n");
-        print_colored(COLOR_YELLOW, "?? 坤城的天空暗了下来，一天又过去了...\n");
+        print_colored(COLOR_YELLOW, "坤城的天空暗了下来，一天又过去了...\n");
         day_end();
     }
 }
@@ -3859,17 +4237,17 @@ void do_task(int task_index) {
      MarketItem* item = &market[index];
      
      if (player.level < item->required_level) {
-         print_colored(COLOR_RED, "? 需要等级 %d 才能购买此物品！\n", item->required_level);
+         print_colored(COLOR_RED, "需要等级 %d 才能购买此物品！\n", item->required_level);
          return;
      }
      
      if (item->is_limited && item->available_until < time(NULL)) {
-         print_colored(COLOR_RED, "? 此限定物品已过期！\n");
+         print_colored(COLOR_RED, "此限定物品已过期！\n");
          return;
      }
      
      if (player.furniture_count >= MAX_FURNITURE) {
-         print_colored(COLOR_RED, "? 家具数量已达到上限！\n");
+         print_colored(COLOR_RED, "家具数量已达到上限！\n");
          return;
      }
      
@@ -3923,7 +4301,7 @@ void do_task(int task_index) {
              }
          }
      } else {
-         print_colored(COLOR_RED, "? 坤币不足！需要 %d 坤币\n", price);
+         print_colored(COLOR_RED, "坤币不足！需要 %d 坤币\n", price);
      }
  }
  
@@ -3933,12 +4311,12 @@ void do_task(int task_index) {
      Skill* skill = &player.skills[skill_index];
      
      if (skill->level >= skill->max_level) {
-         print_colored(COLOR_RED, "? 技能已达到最大等级！\n");
+         print_colored(COLOR_RED, "技能已达到最大等级！\n");
          return;
      }
      
      if (player.skill_points <= 0) {
-         print_colored(COLOR_RED, "? 没有足够的技能点！\n");
+         print_colored(COLOR_RED, "没有足够的技能点！\n");
          return;
      }
      
@@ -3947,7 +4325,7 @@ void do_task(int task_index) {
      if (cost < 10) cost = 10;
      
      if (!remove_coins(cost)) {
-         print_colored(COLOR_RED, "? 升级需要 %d 坤币！\n", cost);
+         print_colored(COLOR_RED, "升级需要 %d 坤币！\n", cost);
          return;
      }
      
@@ -3978,7 +4356,7 @@ void do_task(int task_index) {
      Pet* pet = &player.pets[pet_index];
      
      if (!pet->is_unlocked) {
-         print_colored(COLOR_RED, "? 宠物未解锁！\n");
+         print_colored(COLOR_RED, "宠物未解锁！\n");
          return;
      }
      
@@ -3998,7 +4376,7 @@ void do_task(int task_index) {
      }
      
      if (!has_food) {
-         print_colored(COLOR_RED, "? 没有宠物食品！\n");
+         print_colored(COLOR_RED, "没有宠物食品！\n");
          return;
      }
      
@@ -4018,12 +4396,12 @@ void do_task(int task_index) {
      Pet* pet = &player.pets[pet_index];
      
      if (!pet->is_unlocked) {
-         print_colored(COLOR_RED, "? 宠物未解锁！\n");
+         print_colored(COLOR_RED, "宠物未解锁！\n");
          return;
      }
      
      if (player.energy < 5) {
-         print_colored(COLOR_RED, "? 能量不足！\n");
+         print_colored(COLOR_RED, "能量不足！\n");
          return;
      }
      
@@ -4040,7 +4418,7 @@ void do_task(int task_index) {
  
  void adopt_pet(PetType type) {
      if (player.pet_count >= MAX_PETS) {
-         print_colored(COLOR_RED, "? 宠物数量已达上限！\n");
+         print_colored(COLOR_RED, "宠物数量已达上限！\n");
          return;
      }
      
@@ -4051,7 +4429,7 @@ void do_task(int task_index) {
      switch (type) {
          case PET_CAT:
              if (player.pets[0].is_unlocked) {
-                 print_colored(COLOR_RED, "? 已拥有此宠物！\n");
+                 print_colored(COLOR_RED, "已拥有此宠物！\n");
                  return;
              }
              unlock_level = 1;
@@ -4087,12 +4465,12 @@ void do_task(int task_index) {
      }
      
      if (player.level < unlock_level) {
-         print_colored(COLOR_RED, "? 需要等级 %d 才能领养此宠物！\n", unlock_level);
+         print_colored(COLOR_RED, "需要等级 %d 才能领养此宠物！\n", unlock_level);
          return;
      }
      
      if (!remove_coins(unlock_cost)) {
-         print_colored(COLOR_RED, "? 需要 %lld 坤币！\n", unlock_cost);
+         print_colored(COLOR_RED, "需要 %lld 坤币！\n", unlock_cost);
          return;
      }
      
@@ -4133,14 +4511,14 @@ void do_task(int task_index) {
  
  void level_up_company() {
      if (player.current_company_level >= MAX_COMPANY_LEVELS - 1) {
-         print_colored(COLOR_RED, "? 公司已达到最高等级！\n");
+         print_colored(COLOR_RED, "公司已达到最高等级！\n");
          return;
      }
      
      CompanyLevel* next_level = &player.company_levels[player.current_company_level + 1];
      
      if (!remove_coins(next_level->required_coins)) {
-         print_colored(COLOR_RED, "? 升级需要 %lld 坤币！\n", next_level->required_coins);
+         print_colored(COLOR_RED, "升级需要 %lld 坤币！\n", next_level->required_coins);
          return;
      }
      
@@ -4167,7 +4545,7 @@ void do_task(int task_index) {
  }
  
  void buy_stock(int stock_index, int amount) {
-     if (stock_index < 0 || stock_index >= 5) return;
+     if (stock_index < 0 || stock_index >= 25) return;
      if (amount <= 0) return;
      
      Stock* stock = &player.stocks[stock_index];
@@ -4176,16 +4554,16 @@ void do_task(int task_index) {
      // v4.1 全梭哈确认：当花费超过当前坤币50%时弹出确认
      if (total_cost > 0 && player.kun_coins > 0 && total_cost > player.kun_coins / 2) {
          printf("\n?? 警告：此操作将花费 %d 坤币（当前余额：%lld 坤币）\n", total_cost, player.kun_coins);
-         printf("?? 确认要大手笔买入吗？(1=确认, 0=取消): ");
+         printf("确认要大手笔买入吗？(1=确认, 0=取消): ");
          int confirm = get_valid_input(0, 1);
          if (confirm == 0) {
-             print_colored(COLOR_YELLOW, "? 已取消买入。\n");
+             print_colored(COLOR_YELLOW, "已取消买入。\n");
              return;
          }
      }
      
      if (!remove_coins(total_cost)) {
-         print_colored(COLOR_RED, "? 坤币不足！需要 %d 坤币\n", total_cost);
+         print_colored(COLOR_RED, "坤币不足！需要 %d 坤币\n", total_cost);
          return;
      }
      
@@ -4208,10 +4586,10 @@ void do_task(int task_index) {
  }
  
  void sell_stock(int stock_index, int amount) {
-     if (stock_index < 0 || stock_index >= 5) return;
+     if (stock_index < 0 || stock_index >= 25) return;
      if (amount <= 0) return;
      if (player.invested_stocks[stock_index] < amount) {
-         print_colored(COLOR_RED, "? 持股不足！\n");
+         print_colored(COLOR_RED, "持股不足！\n");
          return;
      }
      
@@ -4230,14 +4608,14 @@ void do_task(int task_index) {
  void buy_property(int property_index) {
      if (property_index < 0 || property_index >= 10) return;
      if (available_properties[property_index].owned) {
-         print_colored(COLOR_RED, "? 已拥有此房产！\n");
+         print_colored(COLOR_RED, "已拥有此房产！\n");
          return;
      }
      
      Property* prop = &available_properties[property_index];
      
      if (!remove_coins(prop->coins_needed)) {
-         print_colored(COLOR_RED, "? 坤币不足！需要 %lld 坤币\n", prop->coins_needed);
+         print_colored(COLOR_RED, "坤币不足！需要 %lld 坤币\n", prop->coins_needed);
          return;
      }
      
@@ -4263,7 +4641,7 @@ void do_task(int task_index) {
  
  void participate_lottery() {
      if (player.lottery_tickets <= 0) {
-         print_colored(COLOR_RED, "? 没有彩票！\n");
+         print_colored(COLOR_RED, "没有彩票！\n");
          return;
      }
      
@@ -4296,7 +4674,7 @@ void do_task(int task_index) {
  
  void open_mystery_box() {
      if (player.mystery_keys <= 0) {
-         print_colored(COLOR_RED, "? 没有神秘钥匙！\n");
+         print_colored(COLOR_RED, "没有神秘钥匙！\n");
          return;
      }
      
@@ -4332,12 +4710,12 @@ void do_task(int task_index) {
  
  void challenge_boss() {
      if (player.active_event != EVENT_BOSS_CHALLENGE) {
-         print_colored(COLOR_RED, "? 当前没有BOSS挑战事件！\n");
+         print_colored(COLOR_RED, "当前没有BOSS挑战事件！\n");
          return;
      }
      
      if (player.energy < 50) {
-         print_colored(COLOR_RED, "? 能量不足，需要50能量！\n");
+         print_colored(COLOR_RED, "能量不足，需要50能量！\n");
          return;
      }
      
@@ -4381,12 +4759,12 @@ void do_task(int task_index) {
  
  void participate_festival() {
      if (player.active_event != EVENT_FESTIVAL) {
-         print_colored(COLOR_RED, "? 当前不是节日庆典！\n");
+         print_colored(COLOR_RED, "当前不是节日庆典！\n");
          return;
      }
      
      if (player.energy < 20) {
-         print_colored(COLOR_RED, "? 能量不足！\n");
+         print_colored(COLOR_RED, "能量不足！\n");
          return;
      }
      
@@ -4433,7 +4811,7 @@ void change_season() {
  
  void craft_item() {
      CLEAR_SCREEN();
-     draw_box("?? 物品合成");
+     draw_box("物品合成");
      
      printf("可合成配方：\n");
      printf("1. 能量饮料（2个） → 能量大补丸（恢复50能量）\n");
@@ -4490,9 +4868,9 @@ void change_season() {
                      player.inventory[player.inventory_count++] = item;
                  }
                  player.craft_count++;
-                 print_colored(COLOR_GREEN, "? 合成成功！获得能量大补丸\n");
+                 print_colored(COLOR_GREEN, "合成成功！获得能量大补丸\n");
              } else {
-                 print_colored(COLOR_RED, "? 能量饮料不足！需要2个\n");
+                 print_colored(COLOR_RED, "能量饮料不足！需要2个\n");
              }
              break;
          }
@@ -4540,9 +4918,9 @@ void change_season() {
                      player.inventory[player.inventory_count++] = item;
                  }
                  player.craft_count++;
-                 print_colored(COLOR_GREEN, "? 合成成功！获得高级宠物粮\n");
+                 print_colored(COLOR_GREEN, "合成成功！获得高级宠物粮\n");
              } else {
-                 print_colored(COLOR_RED, "? 宠物食品不足！需要3个\n");
+                 print_colored(COLOR_RED, "宠物食品不足！需要3个\n");
              }
              break;
          }
@@ -4571,14 +4949,14 @@ void change_season() {
                  }
                  player.mystery_keys++;
                  player.craft_count++;
-                 print_colored(COLOR_GREEN, "? 合成成功！获得1把神秘钥匙\n");
+                 print_colored(COLOR_GREEN, "合成成功！获得1把神秘钥匙\n");
              } else {
-                 print_colored(COLOR_RED, "? 彩票不足！需要5张\n");
+                 print_colored(COLOR_RED, "彩票不足！需要5张\n");
              }
              break;
          }
          case 4:
-             print_colored(COLOR_YELLOW, "? 该配方正在开发中...\n");
+             print_colored(COLOR_YELLOW, "该配方正在开发中...\n");
              break;
          default:
              break;
@@ -4593,7 +4971,7 @@ void change_season() {
      
      Friend* f = &player.friends[friend_index];
      if (f->friendship_level < 50) {
-         print_colored(COLOR_RED, "? 好感度不足50，无法交易！\n");
+         print_colored(COLOR_RED, "好感度不足50，无法交易！\n");
          return;
      }
      
@@ -4603,12 +4981,12 @@ void change_season() {
      
      int amount;
      if (sscanf(buffer, "%d", &amount) != 1 || amount <= 0) {
-         print_colored(COLOR_RED, "? 输入无效！\n");
+         print_colored(COLOR_RED, "输入无效！\n");
          return;
      }
      
      if (!remove_coins(amount)) {
-         print_colored(COLOR_RED, "? 坤币不足！\n");
+         print_colored(COLOR_RED, "坤币不足！\n");
          return;
      }
      
@@ -4618,7 +4996,7 @@ void change_season() {
      f->friendship_level += 5;
      if (f->friendship_level > 100) f->friendship_level = 100;
      
-     print_colored(COLOR_GREEN, "? 交易成功！获得 %d 经验，好感度+5\n", exp_gain);
+     print_colored(COLOR_GREEN, "交易成功！获得 %d 经验，好感度+5\n", exp_gain);
  }
  
  void send_gift_to_friend(int friend_index) {
@@ -4642,13 +5020,13 @@ void change_season() {
      }
      
      if (!has_gift) {
-         print_colored(COLOR_RED, "? 没有可赠送的礼物！\n");
+         print_colored(COLOR_RED, "没有可赠送的礼物！\n");
          return;
      }
      
      f->friendship_level += 20;
      if (f->friendship_level > 100) f->friendship_level = 100;
-     print_colored(COLOR_GREEN, "?? 赠送成功！好感度+20\n");
+     print_colored(COLOR_GREEN, "赠送成功！好感度+20\n");
  }
  
  void prestige() {
@@ -4659,13 +5037,13 @@ void change_season() {
          }
          
          if (player.level < 50 || player.kun_coins < 1000000 || unlocked_achievements < 20) {
-             print_colored(COLOR_RED, "? 不满足声望重置条件！\n");
+             print_colored(COLOR_RED, "不满足声望重置条件！\n");
              printf("   需要：等级50、100万坤币、20个成就\n");
              return;
          }
      }
      
-     printf("?? 确定要进行声望重置吗？这将重置大部分进度，但获得永久加成。\n");
+     printf("确定要进行声望重置吗？这将重置大部分进度，但获得永久加成。\n");
      printf("输入 YES 确认：");
      char confirm[10];
      if (fgets(confirm, sizeof(confirm), stdin) == NULL) return;
@@ -4718,7 +5096,7 @@ void buy_premium(int duration_days) {
     if (duration_days > 365) cost = 100000;  // 永久会员，避免大整数溢出
     
     if (!remove_coins(cost)) {
-        print_colored(COLOR_RED, "? 坤币不足！需要 %d\n", cost);
+        print_colored(COLOR_RED, "坤币不足！需要 %d\n", cost);
         return;
     }
     
@@ -4739,7 +5117,7 @@ void buy_premium(int duration_days) {
  //================ UI显示函数 ================
  void show_friends() {
      CLEAR_SCREEN();
-     draw_box("?? 好友系统");
+     draw_box("好友系统");
      
      printf("当前好友：%d/%d\n\n", player.friend_count, MAX_FRIENDS);
      
@@ -4748,15 +5126,15 @@ void buy_premium(int duration_days) {
          printf("%d. %s\n", i + 1, f->username);
          printf("   等级：%d\n", f->level);
          printf("   好感度：%.0f/100\n", f->friendship_level);
-         printf("   状态：%s\n", f->is_online ? "?? 在线" : "? 离线");
+         printf("   状态：%s\n", f->is_online ? "在线" : "离线");
          printf("\n");
      }
      
      if (player.friend_count < MAX_FRIENDS) {
-         printf("? 可添加好友：\n");
+         printf("可添加好友：\n");
          for (int i = 0; i < MAX_FRIENDS; i++) {
              if (!potential_friends[i].is_friend && potential_friends[i].level > 0) {
-                 printf("   %s (等级%d)\n", potential_friends[i].username, potential_friends[i].level);
+                 printf("   %s（等级%d）\n", potential_friends[i].username, potential_friends[i].level);
                  potential_friends[i].is_friend = true;
                  break;
              }
@@ -4771,13 +5149,13 @@ void buy_premium(int duration_days) {
      
      if (choice == 1) {
          if (player.friend_count >= MAX_FRIENDS) {
-             print_colored(COLOR_RED, "? 好友已满！\n");
+             print_colored(COLOR_RED, "好友已满！\n");
          } else {
              for (int i = 0; i < MAX_FRIENDS; i++) {
                  if (!potential_friends[i].is_friend) {
                      player.friends[player.friend_count++] = potential_friends[i];
                      potential_friends[i].is_friend = true;
-                     print_colored(COLOR_GREEN, "? 添加好友成功！\n");
+                     print_colored(COLOR_GREEN, "添加好友成功！\n");
                      break;
                  }
              }
@@ -4796,9 +5174,9 @@ void buy_premium(int duration_days) {
  
  void show_statistics() {
      CLEAR_SCREEN();
-     draw_box("?? 游戏统计");
+     draw_box("游戏统计");
      
-     printf(COLOR_BOLD "?? 游戏时长\n" COLOR_RESET);
+     printf(COLOR_BOLD "游戏时长\n" COLOR_RESET);
      int hours = player.total_play_time / 3600;
      int mins = (player.total_play_time % 3600) / 60;
      int secs = player.total_play_time % 60;
@@ -4819,10 +5197,10 @@ void buy_premium(int duration_days) {
      printf("   宠物：%d/%d\n", player.pet_count, MAX_PETS);
      printf("   房产：%d/10\n", player.property_count);
      int stock_total = 0;
-     for (int i = 0; i < 5; i++) {
-         stock_total += player.invested_stocks[i];
-     }
-     printf("   股票持仓：%d股\n", stock_total);
+    for (int i = 0; i < 25; i++) {
+        stock_total += player.invested_stocks[i];
+    }
+    printf("   股票持仓：%d股（共25支）\n", stock_total);
      
      printf(COLOR_BOLD "\n?? 战斗统计\n" COLOR_RESET);
      printf("   BOSS击败：%d\n", player.boss_defeats);
@@ -4845,7 +5223,7 @@ void buy_premium(int duration_days) {
  
  void show_premium_shop() {
      CLEAR_SCREEN();
-     draw_box("?? 会员商城");
+     draw_box("会员商城");
      
      printf("会员特权：\n");
      printf("  ? 每日登录奖励翻倍\n");
@@ -4871,7 +5249,7 @@ void buy_premium(int duration_days) {
              if (player.prestige_level >= 1) {
                  buy_premium(36500);
              } else {
-                 print_colored(COLOR_RED, "? 需要声望等级1！\n");
+                 print_colored(COLOR_RED, "需要声望等级1！\n");
              }
              break;
          default:
@@ -4882,7 +5260,7 @@ void buy_premium(int duration_days) {
  
  void show_settings() {
      CLEAR_SCREEN();
-     draw_box("?? 游戏设置");
+     draw_box("游戏设置");
      
      printf("1. 显示帮助\n");
      printf("2. 关于游戏\n");
@@ -4907,7 +5285,7 @@ void buy_premium(int duration_days) {
              printf("感谢您的支持！\n");
              break;
          case 3:
-             printf("?? 确定重置所有进度？(y/n): ");
+             printf("确定重置所有进度？(y/n): ");
              confirm = _getch();
              printf("\n");
              if (confirm == 'y' || confirm == 'Y') {
@@ -4920,18 +5298,18 @@ void buy_premium(int duration_days) {
                  init_company_levels();
                  init_stocks();
                  init_chat_room();
-                 print_colored(COLOR_GREEN, "? 游戏进度已重置！\n");
+                 print_colored(COLOR_GREEN, "游戏进度已重置！\n");
              }
              break;
          case 4:
-             printf("?? 确定删除存档文件？(y/n): ");
+             printf("确定删除存档文件？(y/n): ");
              confirm = _getch();
              printf("\n");
              if (confirm == 'y' || confirm == 'Y') {
                  if (remove(SAVE_FILE) == 0) {
-                     print_colored(COLOR_GREEN, "? 存档已删除！\n");
+                     print_colored(COLOR_GREEN, "存档已删除！\n");
                  } else {
-                     print_colored(COLOR_RED, "? 删除失败！\n");
+                     print_colored(COLOR_RED, "删除失败！\n");
                  }
              }
              break;
@@ -4943,51 +5321,51 @@ void buy_premium(int duration_days) {
  
  void show_help() {
      CLEAR_SCREEN();
-     draw_box("?? 游戏指南");
+     draw_box("游戏指南");
      
-     printf(COLOR_BOLD "?? 游戏目标\n" COLOR_RESET);
+     printf(COLOR_BOLD "游戏目标\n" COLOR_RESET);
      printf("在坤城这座欲望都市里活下去，闯出名堂，定义你自己的成功。\n");
      printf("通过打工赚钱、结交朋友、投资理财、经营公司，成为你想成为的人。\n\n");
      
-     printf(COLOR_BOLD "?? 世界观\n" COLOR_RESET);
+     printf(COLOR_BOLD "世界观\n" COLOR_RESET);
      printf("坤城是一座虚构的中国当代沿海城市，约300万人口。\n");
      printf("城区分为：老城区（租金低）、CBD（白领聚集）、开发区（工厂+物流）、\n");
      printf("大学城、富人区。你初始住在老城区出租屋。\n");
      printf("坤城不问你的过去，只问你的价格。\n\n");
      
-     printf(COLOR_BOLD "?? 核心玩法\n" COLOR_RESET);
+     printf(COLOR_BOLD "核心玩法\n" COLOR_RESET);
      printf("1. 打工赚钱：在坤城各行各业打工，从出租车司机到企业家\n");
      printf("2. 商城购物：购买家具和物品提升生活质量\n");
      printf("3. 技能升级：提升10项技能增加任务收入\n");
      printf("4. 成就系统：完成特定目标获得奖励（叙事型成就）\n");
      printf("5. 随机事件：坤城每天都有新鲜事发生\n\n");
      
-     printf(COLOR_BOLD "? 能量系统\n" COLOR_RESET);
-     printf("? 每个任务消耗能量\n");
-     printf("? 能量每10分钟恢复1点\n");
-     printf("? 使用能量饮料可快速恢复\n\n");
+     printf(COLOR_BOLD "能量系统\n" COLOR_RESET);
+     printf("每个任务消耗能量\n");
+     printf("能量每10分钟恢复1点\n");
+     printf("使用能量饮料可快速恢复\n\n");
      
-     printf(COLOR_BOLD "? 特色功能\n" COLOR_RESET);
-     printf("? 季节系统：春夏秋冬影响坤城的打工和投资环境\n");
-     printf("? 宠物系统：猫咪/狗狗/鹦鹉/龙/凤凰提供额外加成\n");
-     printf("? 公司经营：从个体户到传奇财团，一步步建立你的商业帝国\n");
-     printf("? 股票市场：投资坤坤科技等5支股票获得收益\n");
-     printf("? 房产投资：在坤城各区购买房产获得稳定收入\n");
-     printf("? 声望系统：重置游戏获得永久加成\n");
-     printf("? 合成系统：合成高级物品\n");
-     printf("? 好友系统：与小明、小红等坤城居民互动\n");
-     printf("? 会员系统：购买会员享特权\n");
-     printf("? 手机聊天室：与路人甲、小妹、老陈等坤城人物社交\n");
-     printf("? 状态系统：饱食度/血量/精神影响你的坤城生活\n");
+     printf(COLOR_BOLD "特色功能\n" COLOR_RESET);
+     printf("季节系统：春夏秋冬影响坤城的打工和投资环境\n");
+     printf("宠物系统：猫咪/狗狗/鹦鹉/龙/凤凰提供额外加成\n");
+     printf("公司经营：从个体户到传奇财团，一步步建立你的商业帝国\n");
+     printf("股票市场：投资25支股票获得收益\n");
+     printf("房产投资：在坤城各区购买房产获得稳定收入\n");
+     printf("声望系统：重置游戏获得永久加成\n");
+     printf("合成系统：合成高级物品\n");
+     printf("好友系统：与小明、小红等坤城居民互动\n");
+     printf("会员系统：购买会员享特权\n");
+     printf("手机聊天室：与路人甲、小妹、老陈等坤城人物社交\n");
+     printf("状态系统：饱食度/血量/精神影响你的坤城生活\n");
      
      draw_separator();
  }
  
 void show_status() {
      CLEAR_SCREEN();
-     draw_box("?? 玩家状态");
+     draw_box("玩家状态");
 
-     printf(COLOR_BOLD "?? 基本信息\n" COLOR_RESET);
+     printf(COLOR_BOLD "基本信息\n" COLOR_RESET);
      printf(COLOR_BOLD "   玩家名称：" COLOR_RESET COLOR_GREEN "%s\n" COLOR_RESET, player.player_name);
      printf("   等级：%d\n", player.level);
     
@@ -5104,7 +5482,7 @@ void show_status() {
  
  void show_inventory() {
      CLEAR_SCREEN();
-     draw_box("?? 背包物品");
+     draw_box("背包物品");
      
      if (player.inventory_count == 0) {
          printf("背包空空如也...\n");
@@ -5151,7 +5529,7 @@ void show_status() {
          int item_choice = get_valid_input(1, player.inventory_count);
          use_inventory_item(item_choice - 1);
      } else if (choice == 2) {
-         print_colored(COLOR_GREEN, "? 背包已整理！\n");
+         print_colored(COLOR_GREEN, "背包已整理！\n");
      } else if (choice == 3) {
          craft_item();
      }
@@ -5164,7 +5542,7 @@ void show_status() {
      InventoryItem* item = &player.inventory[item_index];
      
      if (item->quantity <= 0) {
-         print_colored(COLOR_RED, "? 物品数量不足！\n");
+         print_colored(COLOR_RED, "物品数量不足！\n");
          return;
      }
      
@@ -5173,32 +5551,32 @@ void show_status() {
      if (strcmp(item->name, "能量饮料") == 0) {
          player.energy += 20;
          if (player.energy > player.max_energy) player.energy = player.max_energy;
-         print_colored(COLOR_GREEN, "? 使用能量饮料，恢复20点能量！\n");
+         print_colored(COLOR_GREEN, "使用能量饮料，恢复20点能量！\n");
      } else if (strcmp(item->name, "能量大补丸") == 0) {
          player.energy += 50;
          if (player.energy > player.max_energy) player.energy = player.max_energy;
-         print_colored(COLOR_GREEN, "? 使用能量大补丸，恢复50点能量！\n");
+         print_colored(COLOR_GREEN, "使用能量大补丸，恢复50点能量！\n");
      } else if (strcmp(item->name, "彩票") == 0) {
          player.lottery_tickets++;
-         print_colored(COLOR_GREEN, "?? 获得1张彩票！\n");
+         print_colored(COLOR_GREEN, "获得1张彩票！\n");
      } else if (strcmp(item->name, "宠物食品") == 0) {
-         print_colored(COLOR_GREEN, "?? 请在宠物界面喂食\n");
+         print_colored(COLOR_GREEN, "请在宠物界面喂食\n");
          item->quantity++;
          return;
      } else if (strcmp(item->name, "高级宠物粮") == 0) {
-         print_colored(COLOR_GREEN, "?? 请在宠物界面喂食\n");
+         print_colored(COLOR_GREEN, "请在宠物界面喂食\n");
          item->quantity++;
          return;
      } else if (strcmp(item->name, "面包") == 0) {
          player.hunger += 15;
          if (player.hunger > 100) player.hunger = 100;
-         print_colored(COLOR_GREEN, "? 食用面包，饱食度+15\n");
+         print_colored(COLOR_GREEN, "食用面包，饱食度+15\n");
      } else if (strcmp(item->name, "盒饭") == 0) {
          player.hunger += 30;
          if (player.hunger > 100) player.hunger = 100;
-         print_colored(COLOR_GREEN, "? 食用盒饭，饱食度+30\n");
+         print_colored(COLOR_GREEN, "食用盒饭，饱食度+30\n");
      } else {
-         print_colored(COLOR_YELLOW, "? 该物品无法使用\n");
+         print_colored(COLOR_YELLOW, "该物品无法使用\n");
      }
      
      if (item->quantity <= 0) {
@@ -5211,7 +5589,7 @@ void show_status() {
  
  void show_quests() {
      CLEAR_SCREEN();
-     draw_box("?? 任务列表");
+     draw_box("任务列表");
      
      int active_count = 0;
      for (int i = 0; i < MAX_QUESTS; i++) {
@@ -5230,17 +5608,17 @@ void show_status() {
          if (quest->assigned_time == 0) continue;
          
          if (quest->completed) {
-             printf(COLOR_GREEN "? %s\n" COLOR_RESET, quest->name);
+             printf(COLOR_GREEN "%s\n" COLOR_RESET, quest->name);
              printf("   已完成！\n");
          } else if (quest->deadline != 0 && quest->deadline < time(NULL)) {
-             printf(COLOR_RED "? %s\n" COLOR_RESET, quest->name);
+             printf(COLOR_RED "%s\n" COLOR_RESET, quest->name);
              printf("   已过期\n");
          } else {
              if (player.is_hallucinating && (rand() % 2)) {
-                 printf(COLOR_RED "?? ????\n" COLOR_RESET);
+                 printf(COLOR_RED "????\n" COLOR_RESET);
                  printf("   ￥#@%% !!!\n");
              } else {
-                 printf(COLOR_CYAN "?? %s\n" COLOR_RESET, quest->name);
+                 printf(COLOR_CYAN "%s\n" COLOR_RESET, quest->name);
                  printf("   %s\n", quest->description);
                  printf("   进度：%d/%d\n", quest->progress, quest->requirement);
              }
@@ -5274,7 +5652,7 @@ void show_status() {
  
  void show_pets() {
      CLEAR_SCREEN();
-     draw_box("?? 宠物系统");
+     draw_box("宠物系统");
      
      printf("已解锁宠物：%d/%d\n\n", player.pet_count, MAX_PETS);
      
@@ -5284,7 +5662,7 @@ void show_status() {
          Pet* pet = &player.pets[i];
          
          if (pet->is_unlocked) {
-             printf("?? %s\n", pet->name);
+             printf("%s\n", pet->name);
              printf("   类型：%s\n", pet_type_names[pet->type]);
              printf("   等级：%d\n", pet->level);
              printf("   快乐度：");
@@ -5293,7 +5671,7 @@ void show_status() {
              print_progress_bar(pet->hunger, 100, 20);
              printf("\n   加成倍数：%.2f\n\n", pet->bonus_multiplier);
          } else {
-             printf("?? 未解锁宠物\n");
+             printf("未解锁宠物\n");
              printf("   类型：%s\n", pet_type_names[i]);
              switch (i) {
                  case 1: printf("   解锁条件：达到等级5，5000坤币"); break;
@@ -5313,7 +5691,7 @@ void show_status() {
      int choice = get_valid_input(0, 3);
      if (choice > 0) {
          if (player.pet_count == 0) {
-             print_colored(COLOR_RED, "? 没有宠物！\n");
+             print_colored(COLOR_RED, "没有宠物！\n");
          } else if (choice <= 2) {
              printf("选择宠物 (1-%d): ", player.pet_count);
              int pet_choice = get_valid_input(1, player.pet_count);
@@ -5348,7 +5726,7 @@ void show_status() {
  
  void show_company() {
      CLEAR_SCREEN();
-     draw_box("?? 公司管理");
+     draw_box("公司管理");
      
      CompanyLevel* current = &player.company_levels[player.current_company_level];
      
@@ -5383,72 +5761,311 @@ void show_status() {
          printf("0. 返回\n");
          get_valid_input(0, 0);
      }
-     press_any_key();
+    press_any_key();
  }
- 
- void show_stock_market() {
-     CLEAR_SCREEN();
-     draw_box("?? 股票市场");
-     
-     update_stock_prices();
-     
-     time_t now = time(NULL);
-     printf("更新时间：%s", ctime(&now));
-     printf("\n");
-     
-     for (int i = 0; i < 5; i++) {
-         Stock* stock = &player.stocks[i];
-         
-         printf("%s\n", stock->name);
-         printf("   当前价格：%d 坤币\n", stock->current_price);
-         if (stock->price_change > 0) {
-             printf(COLOR_GREEN "   涨跌：+%d (%.1f%%)\n" COLOR_RESET, 
-                    stock->price_change, (float)stock->price_change / stock->current_price * 100);
-         } else if (stock->price_change < 0) {
-             printf(COLOR_RED "   涨跌：%d (%.1f%%)\n" COLOR_RESET, 
-                    stock->price_change, (float)stock->price_change / stock->current_price * 100);
-         } else {
-             printf("   涨跌：0\n");
-         }
-         printf("   波动率：%d%%\n", stock->volatility);
-         printf("   持有数量：%d\n", player.invested_stocks[i]);
-         if (player.invested_stocks[i] > 0) {
-             int total_value = player.invested_stocks[i] * stock->current_price;
-             printf("   当前价值：%d 坤币\n", total_value);
-         }
-         printf("\n");
-     }
-     
-     draw_separator();
-     printf("1. 购买股票   2. 出售股票   3. 刷新行情   0. 返回\n");
-     draw_separator();
-     
-     int choice = get_valid_input(0, 3);
-     if (choice == 1 || choice == 2) {
-         printf("选择股票 (1-5): ");
-         int stock_choice = get_valid_input(1, 5);
-         printf("输入数量: ");
-         int amount = get_valid_input(1, 10000);
-         
-         if (choice == 1) {
-             buy_stock(stock_choice - 1, amount);
-         } else {
-             sell_stock(stock_choice - 1, amount);
-         }
-     } else if (choice == 3) {
-         for (int i = 0; i < 5; i++) {
-             player.stocks[i].last_update = time(NULL) - 61;
-             player.stocks[i].price_change = 0;
-         }
-         update_stock_prices();
-         print_colored(COLOR_GREEN, "? 行情已刷新！\n");
-     }
-     press_any_key();
- }
+
+//================ 股票行情图窗口（新开CMD） ================
+void open_stock_chart_window() {
+#ifdef _WIN32
+    // 先保存一次最新数据
+    save_stock_history();
+    
+    // 尝试多种路径启动 Python 行情图脚本
+    const char* chart_script_paths[] = {
+        "源码/stock_chart.py",
+        "./源码/stock_chart.py",
+        ".\\源码\\stock_chart.py",
+        "stock_chart.py",
+    };
+    
+    // 尝试多个 Python 命令
+    const char* python_variants[] = {
+        "python",
+        "python3",
+        "C:\\Users\\nb666\\AppData\\Local\\Microsoft\\WindowsApps\\python.exe"
+    };
+    
+    int launched = 0;
+    for (int p = 0; p < 3 && !launched; p++) {
+        for (int s = 0; s < 4 && !launched; s++) {
+            char cmd[1024];
+            // 用 start 开新窗口，cmd /k 保持窗口不关闭
+            snprintf(cmd, sizeof(cmd), 
+                     "start \"股票行情图\" cmd /c \"%s %s && pause\"",
+                     python_variants[p], chart_script_paths[s]);
+            int ret = system(cmd);
+            if (ret != -1) {
+                launched = 1;
+            }
+        }
+    }
+    
+    if (launched) {
+        print_colored(COLOR_GREEN, "已打开股票行情图窗口！\n");
+    } else {
+        print_colored(COLOR_YELLOW, "无法打开行情图窗口，请确保 Python 已安装\n");
+        print_colored(COLOR_YELLOW, "   手动运行: python 源码/stock_chart.py\n");
+    }
+#else
+    print_colored(COLOR_YELLOW, "行情图窗口仅支持 Windows\n");
+#endif
+    press_any_key();
+}
+
+/*================ v5.0 TUI 股票终端 ================*/
+static void stock_draw(int sel, int live, int blink, const char* msg)
+{
+    int W, H;
+    int cy = 1, ch;
+    int lw, rx, rw, i;
+    Stock* s;
+    int line_fg;
+    int list_start, list_h;
+    char buf[256];
+
+    tui_begin();
+    W = tui_cv.w; H = tui_cv.h;
+    ch = H - 3;
+    tui_draw_topbar();
+
+    lw = (W >= 104) ? 42 : W / 2;
+    rx = lw + 1;
+    rw = W - rx - 1;
+    if (rw < 34) { lw = W * 3 / 5; rx = lw + 1; rw = W - rx - 1; }
+
+    s = &player.stocks[sel < 25 ? sel : 0];
+
+    /* ===== 左侧行情榜 ===== */
+    {
+        char ttl[64];
+        snprintf(ttl, sizeof ttl, "行情榜 %d/25", sel + 1);
+        tc_panel(0, cy, lw, ch, ttl, TC_BORDER, TC_BG2, TC_YELLOW);
+    }
+    list_h = ch - 2;
+    if (list_h < 1) list_h = 1;
+    list_start = 0;
+    if (sel >= list_h) list_start = sel - list_h + 1;
+
+    for (i = 0; i < list_h && list_start + i < 25; i++) {
+        int idx = list_start + i;
+        Stock* st = &player.stocks[idx];
+        int y = cy + 1 + i;
+        int on = (idx == sel);
+        int bg = on ? TC_BGHI : TC_BG2;
+        char nb[8], pb[12], db[12];
+
+        tc_fill(1, y, lw - 2, 1, " ", TC_TEXT, bg);
+        tc_put(1, y, on ? ">" : " ", on ? TC_YELLOW : TC_DIM, bg);
+        snprintf(nb, sizeof nb, "%02d", idx + 1);
+        tc_puts(3, y, nb, TC_FAINT, bg);
+        tc_putsn(6, y, 12, st->name, on ? TC_WHITE : TC_TEXT, bg);
+
+        if (lw >= 34) {
+            snprintf(pb, sizeof pb, "%5d", st->current_price);
+            tc_puts(19, y, pb, on ? TC_WHITE : TC_DIM, bg);
+            snprintf(db, sizeof db, "%+4d", st->price_change);
+            tc_puts(25, y, db,
+                    st->price_change > 0 ? TC_RED : (st->price_change < 0 ? TC_GREEN : TC_FAINT), bg);
+        }
+        if (lw >= 42 && g_trend_n > 1) {
+            tc_spark(31, y, lw - 33, g_trend[idx], g_trend_n,
+                     g_trend[idx][0], TC_RED, TC_GREEN, bg);
+        }
+    }
+
+    /* ===== 右侧：KPI ===== */
+    {
+        int kh = 5;
+        int kx = rx + 2, ky = cy + 1;
+        char nm[96];
+        snprintf(nm, sizeof nm, "%s   %s", s->name,
+                 live ? (blink ? "* 实时" : "o 实时") : "- 暂停");
+        tc_panel(rx, cy, rw, kh, nm,
+                 live ? TC_BORDER : TC_BG3,
+                 TC_BG2,
+                 live ? (blink ? TC_RED : TC_REDD) : TC_FAINT);
+
+        /* 第一行：现价 / 涨跌 / 区间 */
+        tc_puts(kx, ky, "现价", TC_DIM, TC_BG2);
+        snprintf(buf, sizeof buf, "%d", s->current_price);
+        tc_puts(kx + 5, ky, buf, TC_WHITE, TC_BG2);
+
+        {
+            int base = (g_trend_n > 0) ? g_trend[sel][0] : s->current_price;
+            int diff = s->current_price - base;
+            float pct = base > 0 ? (float)diff * 100.0f / base : 0;
+            snprintf(buf, sizeof buf, "%+d (%+.2f%%)", diff, pct);
+            tc_puts(kx + 14, ky, buf, diff >= 0 ? TC_RED : TC_GREEN, TC_BG2);
+        }
+
+        if (rw > 58 && g_trend_n > 1) {
+            int lo = g_trend[sel][0], hi = g_trend[sel][0], k;
+            for (k = 1; k < g_trend_n; k++) {
+                if (g_trend[sel][k] < lo) lo = g_trend[sel][k];
+                if (g_trend[sel][k] > hi) hi = g_trend[sel][k];
+            }
+            snprintf(buf, sizeof buf, "区间 %d~%d", lo, hi);
+            tc_puts(rx + rw - 18, ky, buf, TC_DIM, TC_BG2);
+        }
+        ky++;
+
+        /* 第二行：持仓 */
+        {
+            int hold = player.invested_stocks[sel];
+            tc_puts(kx, ky, "持仓", TC_DIM, TC_BG2);
+            snprintf(buf, sizeof buf, "%d 股", hold);
+            tc_puts(kx + 5, ky, buf, hold > 0 ? TC_CYAN : TC_FAINT, TC_BG2);
+            if (hold > 0) {
+                long long mv = (long long)hold * s->current_price;
+                char mb[32];
+                tui_fmt_money(mb, sizeof mb, mv);
+                snprintf(buf, sizeof buf, "市值 %s", mb);
+                tc_puts(kx + 16, ky, buf, TC_YELLOW, TC_BG2);
+            }
+        }
+        ky++;
+
+        /* 第三行：波动 / 基准 / 时间 */
+        {
+            time_t now = time(NULL);
+            struct tm* lt = localtime(&now);
+            snprintf(buf, sizeof buf, "波动 %d%%  基准价 %d  %02d:%02d:%02d",
+                     s->volatility, s->base_price,
+                     lt ? lt->tm_hour : 0, lt ? lt->tm_min : 0, lt ? lt->tm_sec : 0);
+            tc_puts(kx, ky, buf, TC_FAINT, TC_BG2);
+        }
+    }
+
+    /* ===== 右侧：折线图 ===== */
+    {
+        int chy = cy + 5;
+        int chh = ch - 5;
+        int base = (g_trend_n > 0) ? g_trend[sel][0] : s->current_price;
+        line_fg = (s->current_price >= base) ? TC_RED : TC_GREEN;
+        if (chh >= 6) {
+            int start = 0, nn = g_trend_n;
+            int cap = rw - 12;               /* 每列一个点，避免竖线糊成柱子 */
+            if (cap < 12) cap = 12;
+            if (nn > cap) { start = nn - cap; nn = cap; }
+            tc_linechart(rx, chy, rw, chh, g_trend[sel] + start, nn,
+                         "分时走势 · 涨红跌绿", line_fg, TC_FAINT, TC_BG2, 1);
+        }
+    }
+
+    /* ===== 底部 ===== */
+    snprintf(buf, sizeof buf,
+             " [方向键] 选股  [B] 买入  [S] 卖出  [空格] %s  [R] 跳一档  [C] 外置图  [Esc] 返回 ",
+             live ? "暂停实时" : "开启实时");
+    tui_draw_keybar(buf);
+
+    if (msg && msg[0]) tc_puts(2, H - 1, msg, TC_YELLOW, TC_BG);
+    else {
+        tc_puts(2, H - 1, "提示：实时行情每秒跳动一次，历史同时写入 save/stock_history.dat", TC_FAINT, TC_BG);
+    }
+}
+
+void show_stock_market() {
+    int sel = 0;
+    int live = 1;
+    int blink = 0;
+    time_t last_tick = time(NULL);
+    char msg[192];
+    time_t msg_until = 0;
+
+    tui_page_enter("股票市场");
+    tui_trend_load();
+    if (g_trend_n <= 1 && player.stocks[0].current_price > 0) tui_trend_push();
+
+    msg[0] = 0;
+
+    for (;;) {
+        int k;
+
+        if (live) {
+            time_t now = time(NULL);
+            if (now != last_tick) {
+                last_tick = now;
+                tui_stock_live_tick();
+                blink = !blink;
+            }
+        }
+        if (msg_until && time(NULL) > msg_until) { msg[0] = 0; msg_until = 0; }
+
+        stock_draw(sel, live, blink, msg);
+        tui_present();
+
+        k = tui_key_nb();
+        if (k < 0) { tui_sleep_ms(60); continue; }
+
+        if (k == 27 || k == 'q') break;
+
+        if (k == TK_UP)   { sel = (sel - 1 + 25) % 25; continue; }
+        if (k == TK_DOWN) { sel = (sel + 1) % 25; continue; }
+        if (k == TK_PGUP) { sel = (sel - 5 + 25) % 25; continue; }
+        if (k == TK_PGDN) { sel = (sel + 5) % 25; continue; }
+        if (k == TK_HOME) { sel = 0; continue; }
+        if (k == TK_END)  { sel = 24; continue; }
+
+        if (k == ' ') { live = !live; snprintf(msg, sizeof msg, "实时行情已%s。", live ? "开启" : "暂停"); msg_until = time(NULL) + 2; continue; }
+
+        if (k == 'r') {
+            tui_stock_live_tick();
+            snprintf(msg, sizeof msg, "手动跳档：%s 现价 %d", player.stocks[sel].name, player.stocks[sel].current_price);
+            msg_until = time(NULL) + 2;
+            continue;
+        }
+
+        if (k == 'c') { open_stock_chart_window(); snprintf(msg, sizeof msg, "已尝试打开外置行情图窗口"); msg_until = time(NULL) + 2; continue; }
+
+        if (k == 'b' || k == 's') {
+            int amount = 0;
+            char prompt[96];
+            int inv_before = player.invested_stocks[sel];
+            int unit_price = player.stocks[sel].current_price;
+
+            snprintf(prompt, sizeof prompt, "%s · %d 坤币/股 · 数量 ›",
+                     k == 'b' ? "买入" : "卖出", player.stocks[sel].current_price);
+
+            stock_draw(sel, 0, 0, "");
+            tui_present();
+            if (tui_input_int(tui_cv.h - 1, tui_cv.w, prompt, 1, 10000, &amount) < 0) {
+                snprintf(msg, sizeof msg, "已取消。");
+                msg_until = time(NULL) + 2;
+                continue;
+            }
+
+            tui_stream_reset();
+            if (k == 'b') buy_stock(sel, amount);
+            else          sell_stock(sel, amount);
+            tui_stream_reset();
+
+            if (k == 'b') {
+                if (player.invested_stocks[sel] > inv_before)
+                    snprintf(msg, sizeof msg, "买入成功：%s × %d，成交额 %lld 坤币",
+                             player.stocks[sel].name, amount,
+                             (long long)amount * unit_price);
+                else
+                    snprintf(msg, sizeof msg, "买入失败：坤币不足或数量无效。");
+            } else {
+                if (player.invested_stocks[sel] < inv_before)
+                    snprintf(msg, sizeof msg, "卖出成功：%s × %d，成交额 %lld 坤币",
+                             player.stocks[sel].name, amount,
+                             (long long)amount * unit_price);
+                else
+                    snprintf(msg, sizeof msg, "卖出失败：持仓不足。");
+            }
+            msg_until = time(NULL) + 3;
+            continue;
+        }
+    }
+
+    tui_trend_save();
+    tui_stream_reset();
+}
  
  void show_properties() {
      CLEAR_SCREEN();
-     draw_box("?? 房产投资");
+     draw_box("房产投资");
      
      printf("已拥有房产：%d/10\n\n", player.property_count);
      
@@ -5462,11 +6079,11 @@ void show_status() {
          Property* prop = &available_properties[i];
          
          if (prop->owned) {
-             printf(COLOR_GREEN "?? %s\n" COLOR_RESET, prop->name);
+             printf(COLOR_GREEN "%s\n" COLOR_RESET, prop->name);
              printf("   %s\n", prop->description);
              printf("   被动收入：%.0f 坤币/天\n", prop->passive_income);
          } else {
-             printf(COLOR_WHITE "?? %s\n" COLOR_RESET, prop->name);
+             printf(COLOR_WHITE "%s\n" COLOR_RESET, prop->name);
              printf("   %s\n", prop->description);
              printf("   价格：%lld 坤币\n", prop->coins_needed);
              printf("   建造时间：%d 天\n", prop->days_needed);
@@ -5578,7 +6195,7 @@ void show_prestige_menu() {
 void hospital_menu() {
     while (true) {
         CLEAR_SCREEN();
-        draw_box("?? 坤城人民医院");
+        draw_box("坤城人民医院");
         
         printf(COLOR_BOLD "  欢迎来到坤城人民医院！\n" COLOR_RESET);
         printf("  ─────────────────────────────────────\n");
@@ -5589,10 +6206,10 @@ void hospital_menu() {
         printf("  ─────────────────────────────────────\n\n");
         
         printf("  请选择治疗项目：\n\n");
-        printf("  1. 基础包扎 — 50坤币 (恢复30血量 + 10精神)\n");
-        printf("  2. 标准诊疗 — 100坤币 (恢复60血量 + 20精神)\n");
-        printf("  3. 全面康复 — 200坤币 (恢复100血量 + 40精神)\n");
-        printf("  4. 心理疏导 — 80坤币 (恢复50精神)\n");
+        printf("  1. 基础包扎 — 50坤币（恢复30血量 + 10精神）\n");
+        printf("  2. 标准诊疗 — 100坤币（恢复60血量 + 20精神）\n");
+        printf("  3. 全面康复 — 200坤币（恢复100血量 + 40精神）\n");
+        printf("  4. 心理疏导 — 80坤币（恢复50精神）\n");
         printf("  0. 离开医院\n\n");
         
         draw_separator();
@@ -5634,12 +6251,12 @@ void hospital_menu() {
             if (heal_hp > 0) {
                 player.health += heal_hp;
                 if (player.health > 100) player.health = 100;
-                printf("  ?? 血量 +%d (当前: %d/100)\n", heal_hp, player.health);
+                printf("  血量 +%d（当前: %d/100）\n", heal_hp, player.health);
             }
             if (heal_spirit > 0) {
                 player.spirit += heal_spirit;
                 if (player.spirit > 100) player.spirit = 100;
-                printf("  ?? 精神 +%d (当前: %d/100)\n", heal_spirit, player.spirit);
+                printf("  精神 +%d（当前: %d/100）\n", heal_spirit, player.spirit);
             }
             printf("  ?? 花费了 %d 坤币\n", cost);
         } else {
@@ -5649,123 +6266,335 @@ void hospital_menu() {
     }
 }
 
+/*================ v5.0 TUI 主界面 ================*/
+static const char* MENU_LABEL[23] = {
+    "查看状态","打工赚钱","商城购物","技能系统","背包物品","任务列表",
+    "宠物系统","公司管理","股票市场","房产投资","成就系统","声望系统",
+    "好友系统","游戏统计","会员商城","游戏设置","帮助指南","保存游戏",
+    "手机","福布斯榜","睡觉休息","医院治疗","退出游戏"
+};
+static const char* MENU_HINT[23] = {
+    "属性、技能、资产一览",
+    "接活赚钱 —— 今天也要活下去",
+    "买家具换被动收入，买吃的填饱肚子",
+    "技能升级，长期收益在这里",
+    "看看你都攒了些什么",
+    "坤城给的任务，做完有奖励",
+    "宠物会饿，也会给你加成",
+    "从打工仔到老板",
+    "25 支股票，实时行情和折线图",
+    "买房收租，稳一点",
+    "30 个成就，慢慢刷",
+    "声望越高，处处有折扣",
+    "这个城市里认识的人",
+    "数据不会说谎",
+    "充钱才能变强（大概）",
+    "音量、显示、存档",
+    "不知道该干嘛就看这里",
+    "手动存一次，保险",
+    "手机里的聊天室和二手市场",
+    "坤城富豪榜",
+    "提前结束今天，回血",
+    "血没了就去这里",
+    "离开坤城"
+};
+static const int MENU_CODE[23] = {1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20,21,22,0};
+static int g_menu_choice = 0;
+
+static const char* TUI_TIPS[] = {
+    "在坤城，房租不会等你。",
+    "股票能让你富，也能让你睡桥洞。",
+    "精神低于 20 会开始出现幻觉——那不是坤城在骗你。",
+    "加班模式收入高，但猝死不是玩笑。",
+    "老城区的盒饭比 CBD 便宜，味道也好。",
+    "声望高了，很多地方会给你打折。",
+    "每天 3 个时间槽，用完了就只能睡觉。",
+    "医院能救命，但账单也能要命。",
+    "宠物饿久了会掉心情，别只顾着自己。",
+    "聊天室里有人给你活，也有人骗你。",
+    "地铁末班车 23:10，赶不上的话打车很贵。",
+    "坤城不问你的过去，只问你的价格。"
+};
+#define TUI_TIPS_N ((int)(sizeof(TUI_TIPS)/sizeof(TUI_TIPS[0])))
+
+static void tui_draw_report(int x, int y, int w, int h)
+{
+    int line = 0;
+    int warn = 0;
+
+    if (h < 1 || w < 10) return;
+
+    /* 警告优先 */
+    if (player.health <= 0 && line < h) {
+        tc_puts(x, y + line, "你已经昏迷了 —— 马上去医院（22）", TC_RED, TC_BG2);
+        line++; warn = 1;
+    } else if (player.health < 30 && line < h) {
+        tc_puts(x, y + line, "身受重伤，血量低于 30，别再硬撑。", TC_RED, TC_BG2);
+        line++; warn = 1;
+    }
+    if (player.hunger < 20 && line < h) {
+        tc_puts(x, y + line, "饿得发抖 —— 饱食度不足 20，去买点吃的。", TC_RED, TC_BG2);
+        line++; warn = 1;
+    }
+    if (player.spirit < 20 && line < h) {
+        tc_puts(x, y + line, "精神濒临崩溃，再熬下去会出事。", TC_ORANGE, TC_BG2);
+        line++; warn = 1;
+    }
+    if (player.daily_time_slots <= 0 && line < h) {
+        tc_puts(x, y + line, "今天的时间用完了 —— 去睡觉（21），或者结束今天。", TC_YELLOW, TC_BG2);
+        line++; warn = 1;
+    }
+
+    if (!warn && line < h) {
+        tc_puts(x, y + line, "状态正常，坤城今天对你还算客气。", TC_GREEND, TC_BG2);
+        line++;
+    }
+
+    /* 今日目标 */
+    if (line + 4 <= h) {
+        static const char* goal_txt[3] = { "打工一次", "今日收入满 200", "看一次行情" };
+        int g, done[3];
+        done[0] = player.today_work_count > 0;
+        done[1] = player.today_income >= 200;
+        done[2] = g_trend_n > 0;
+        line++;
+        for (g = 0; g < 3 && line < h; g++) {
+            tc_puts(x, y + line, done[g] ? "[x]" : "[ ]", done[g] ? TC_GREEN : TC_FAINT, TC_BG2);
+            tc_putsn(x + 4, y + line, w - 4, goal_txt[g], done[g] ? TC_GREEND : TC_DIM, TC_BG2);
+            line++;
+        }
+    }
+
+    /* 贴士 */
+    if (line + 2 <= h) {
+        int idx = (player.day_count * 7 + line) % TUI_TIPS_N;
+        if (line < h) {
+            tc_put(x, y + line, ".", TC_FAINT, TC_BG2);
+            tc_putsn(x + 2, y + line, w - 2, TUI_TIPS[idx], TC_DIM, TC_BG2);
+            line++;
+        }
+        if (line < h) {
+            int save_in = 0;
+            char buf[128];
+            snprintf(buf, sizeof buf, "自动存档每 5 分钟 · 今日已打工 %d 次 · 进度 %d%%",
+                     player.today_work_count,
+                     (int)((long long)player.kun_exp * 100 / (player.level > 0 ? player.level * 100 : 100)));
+            tc_putsn(x, y + line, w, buf, TC_FAINT, TC_BG2);
+            (void)save_in;
+        }
+    }
+}
+
+static void tui_draw_main_menu(int sel)
+{
+    int i;
+    int cy = 1;
+    int cx = SB_W + 1;
+    int cw;
+    int top_h;
+    int mh;
+
+    tui_begin();
+    cw = tui_cv.w - cx - 1;
+    top_h = (tui_cv.h >= 30) ? 5 : 0;
+    tui_draw_topbar();
+    tui_draw_sidebar(1, tui_cv.h - 3);
+    if (cw < 34) { cx = 0; cw = tui_cv.w; }
+
+    /* ===== 今日概况 ===== */
+    if (top_h > 0) {
+        char b1[128], b2[128];
+        int ix = cx + 2, iy = cy + 1;
+
+        tc_panel(cx, cy, cw, top_h, "今日", TC_BORDER, TC_BG2, TC_CYAN);
+
+        tc_puts(ix, iy, "时间槽", TC_DIM, TC_BG2);
+        {
+            const char* sn[3] = { "上", "下", "晚" };
+            for (i = 0; i < player.max_time_slots && i < 3; i++)
+                tc_put(ix + 7 + i * 3, iy, sn[i],
+                       i < player.daily_time_slots ? TC_GREEN : TC_FAINT, TC_BG2);
+        }
+        tc_puts(ix + 7 + player.max_time_slots * 3 + 1, iy,
+                player.daily_time_slots > 0 ? "还能干活" : "今天干不动了",
+                player.daily_time_slots > 0 ? TC_GREEN : TC_RED, TC_BG2);
+
+        if (cw > 52) {
+            snprintf(b1, sizeof b1, "收入 +%d", player.today_income);
+            tc_puts(ix + 28, iy, b1, TC_GREEN, TC_BG2);
+            snprintf(b2, sizeof b2, "支出 -%d", player.today_expenses);
+            tc_puts(ix + 40, iy, b2, TC_RED, TC_BG2);
+        }
+        iy++;
+
+        if (g_trend_n > 1 && cw > 40) {
+            int idx[TREND_MAX], k, delta;
+            for (i = 0; i < g_trend_n; i++) {
+                int s = 0;
+                for (k = 0; k < 25; k++) s += g_trend[k][i];
+                idx[i] = s * 10 / 25;
+            }
+            tc_puts(ix, iy, "坤城指数", TC_DIM, TC_BG2);
+            snprintf(b1, sizeof b1, "%d", idx[g_trend_n - 1]);
+            tc_puts(ix + 9, iy, b1, TC_YELLOW, TC_BG2);
+            delta = idx[g_trend_n - 1] - idx[0];
+            snprintf(b2, sizeof b2, "%+d", delta);
+            tc_puts(ix + 17, iy, b2, delta >= 0 ? TC_RED : TC_GREEN, TC_BG2);
+            tc_spark(ix + 25, iy, cw - 29, idx, g_trend_n, idx[0], TC_RED, TC_GREEN, TC_BG2);
+            iy++;
+        }
+
+        if (player.active_event != EVENT_NONE) {
+            tc_puts(ix, iy, "进行中", TC_DIM, TC_BG2);
+            tc_puts(ix + 7, iy, get_event_name(player.active_event), TC_ORANGE, TC_BG2);
+        } else {
+            tc_puts(ix, iy, "坤城今天还算平静。", TC_FAINT, TC_BG2);
+        }
+        cy += top_h;
+    }
+
+    /* ===== 主菜单网格 ===== */
+    {
+    int avail = tui_cv.h - 3 - cy;
+    int report_h;
+    mh = 12;
+    if (mh > avail - 5) mh = avail;
+    if (mh < 6) mh = 6;
+    tc_panel(cx, cy, cw, mh, "主菜单", TC_BORDER, TC_BG2, TC_YELLOW);
+    {
+        int cols = 3;
+        int colw = (cw - 4) / cols;
+        if (colw > 27) colw = 27;
+        for (i = 0; i < 23; i++) {
+            int r = i / cols, c = i % cols;
+            int ix = cx + 2 + c * colw;
+            int iy = cy + 1 + r;
+            int on = (i == sel);
+            char num[8];
+            if (iy >= cy + mh - 3) break;
+            tc_fill(ix - 1, iy, colw - 1, 1, " ", on ? TC_WHITE : TC_TEXT, on ? TC_BGHI : TC_BG2);
+            tc_put(ix, iy, on ? ">" : " ", on ? TC_YELLOW : TC_DIM, on ? TC_BGHI : TC_BG2);
+            snprintf(num, sizeof num, "%2d", MENU_CODE[i]);
+            tc_puts(ix + 2, iy, num, on ? TC_YELLOW : TC_FAINT, on ? TC_BGHI : TC_BG2);
+            tc_puts(ix + 5, iy, MENU_LABEL[i], on ? TC_WHITE : TC_DIM, on ? TC_BGHI : TC_BG2);
+        }
+        {
+            int hy = cy + mh - 2;
+            if (hy > cy + 2) {
+                tc_hline(cx + 2, hy - 1, cw - 5, TC_BG3, TC_BG2);
+                tc_put(cx + 2, hy, ">", TC_CYAN, TC_BG2);
+                tc_putsn(cx + 4, hy, cw - 6, MENU_HINT[sel], TC_CYAN, TC_BG2);
+            }
+        }
+    }
+
+    /* ===== 坤城速报 ===== */
+    report_h = avail - mh;
+    if (report_h > 10) report_h = 10;
+    if (report_h >= 5) {
+        int ry = cy + mh;
+        tc_panel(cx, ry, cw, report_h, "坤城速报", TC_BORDER, TC_BG2, TC_ORANGE);
+        tui_draw_report(cx + 2, ry + 1, cw - 4, report_h - 2);
+    }
+    }
+
+    tui_draw_keybar(" [方向键] 选择   [回车] 进入   [1-9/0] 快选   [Q] 退出 ");
+}
+
+static int tui_run_main_menu(void)
+{
+    static int sel = 0;
+    time_t tick = time(NULL);
+
+    for (;;) {
+        int k;
+        tui_draw_main_menu(sel);
+        tui_present();
+
+        for (;;) {
+            k = tui_key_nb();
+            if (k >= 0) {
+                if (k == TK_UP)    { sel = (sel - 3 + 23) % 23; break; }
+                if (k == TK_DOWN)  { sel = (sel + 3) % 23; break; }
+                if (k == TK_LEFT)  { sel = (sel - 1 + 23) % 23; break; }
+                if (k == TK_RIGHT) { sel = (sel + 1) % 23; break; }
+                if (k == TK_HOME)  { sel = 0; break; }
+                if (k == TK_END)   { sel = 22; break; }
+                if (k == 13)       { return MENU_CODE[sel]; }
+                if (k == 'q' || k == 27) return 0;
+                if (k >= '0' && k <= '9') {
+                    int want = (k == '0') ? 0 : (k - '0');
+                    int j;
+                    for (j = 0; j < 23; j++) if (MENU_CODE[j] == want) { return want; }
+                }
+            }
+            tui_sleep_ms(25);
+            if (time(NULL) != tick) { tick = time(NULL); break; }
+        }
+    }
+}
+
 void show_main_menu() {
-    CLEAR_SCREEN();
-    
-    // 幻觉效果影响菜单显示
-    if (player.is_hallucinating) {
-        printf(COLOR_RED);
-        printf("  ╔════════════════════════════════════════════════════════════════════════════╗\n");
-        printf("  ║                              工???? ???? v4.0                            ║\n");
-        printf("  ║                                                                            ║\n");
-        printf("  ╚════════════════════════════════════════════════════════════════════════════╝\n");
-        printf(COLOR_RESET "\n");
-        
-        printf(COLOR_BOLD "?? ?????????" COLOR_RESET);
-        printf("??? %d | ???? %lld | ???? %d/%d | ???? %d\n\n", 
-               player.level, player.kun_coins, player.daily_time_slots, player.max_time_slots, player.prestige_level);
+    g_menu_choice = tui_run_main_menu();
+}
+
+/* 自检：渲染几帧到 stdout 后退出（环境变量 TUI_SELFTEST=1 触发，不影响正常游玩） */
+static void tui_selftest(void)
+{
+    const char* f = getenv("TUI_FRAME");
+    int frame = f ? atoi(f) : 1;
+    int i;
+
+    tui_lock_size = 1;
+    tui_resize_canvas(120, 40);
+
+    /* 统一造一份有内容的存档，方便看排版 */
+    player.day_count = 12;
+    player.level = 7;
+    player.kun_coins = 48250;
+    player.kun_exp = 320;
+    player.daily_time_slots = 2;
+    player.today_income = 860;
+    player.today_expenses = 240;
+    player.today_work_count = 1;
+    player.hunger = 46;
+    player.health = 78;
+    player.spirit = 32;
+    player.prestige_level = 2;
+    player.skill_points = 5;
+    player.invested_stocks[8] = 200;
+
+    tui_trend_load();
+    for (i = 0; i < 40; i++) tui_stock_live_tick();
+
+    if (frame == 1) {
+        tui_draw_main_menu(0);
+    } else if (frame == 2) {
+        stock_draw(8, 1, 1, "");
+    } else if (frame == 3) {
+        tui_stream_reset();
+        tui_stream_set_title("技能系统");
+        printf("可用技能点：3\n\n");
+        printf(COLOR_YELLOW "速度 Lv.3" COLOR_RESET "   加成 12%%\n");
+        printf("  提升移动与反应速度，打工时更容易抢到活。\n");
+        print_progress_bar(3, 20, 26);
+        printf("\n" COLOR_CYAN "力量 Lv.1" COLOR_RESET "   加成 4%%\n");
+        print_progress_bar(1, 20, 26);
+        printf("\n" COLOR_MAGENTA "智力 Lv.5" COLOR_RESET "   加成 21%%\n");
+        print_progress_bar(5, 20, 26);
+        printf("\n");
+        draw_separator();
+        printf("1.速度 2.力量 3.智力 4.幸运 5.魅力\n");
+        printf("6.耐力 7.创造力 8.领导力 9.谈判 10.管理\n");
+        printf("0.返回\n");
+        tui_draw_page(NULL);
     } else {
-        printf(COLOR_YELLOW COLOR_BOLD);
-        printf("  ╔════════════════════════════════════════════════════════════════════════════╗\n");
-        printf("  ║                                                                            ║\n");
-        printf("  ║                         打工模拟器 v4.0 — 坤城篇                              ║\n");
-        printf("  ║                                                                            ║\n");
-        printf("  ╚════════════════════════════════════════════════════════════════════════════╝\n");
-        printf(COLOR_RESET "\n");
-        
-        // ===== 显示所有状态值 =====
-        printf(COLOR_BOLD "?? 玩家信息：" COLOR_RESET);
-        printf("等级 %d | 坤币 %lld | 时间槽 %d/%d | 第%d天 | 声望 %d\n", 
-               player.level, player.kun_coins, player.daily_time_slots, player.max_time_slots, player.day_count, player.prestige_level);
-        
-        // 显示饱食度（带进度条）
-        printf("  饱食度: ");
-        int bar_len = 20;
-        int filled = player.hunger * bar_len / 100;
-        for (int i = 0; i < bar_len; i++) {
-            if (i < filled) printf("#");
-            else printf("-");
-        }
-        if (player.hunger < 20) printf(COLOR_RED " %d/100 [饥饿!]" COLOR_RESET, player.hunger);
-        else if (player.hunger < 50) printf(COLOR_YELLOW " %d/100" COLOR_RESET, player.hunger);
-        else printf(COLOR_GREEN " %d/100" COLOR_RESET, player.hunger);
-        printf("\n");
-        
-        // 显示血量（带进度条）
-        printf("  血量:   ");
-        filled = player.health * bar_len / 100;
-        for (int i = 0; i < bar_len; i++) {
-            if (i < filled) printf("#");
-            else printf("-");
-        }
-        if (player.health < 30) printf(COLOR_RED " %d/100 [重伤!]" COLOR_RESET, player.health);
-        else if (player.health < 60) printf(COLOR_YELLOW " %d/100" COLOR_RESET, player.health);
-        else printf(COLOR_GREEN " %d/100" COLOR_RESET, player.health);
-        printf("\n");
-        
-        // 显示精神值（带进度条）
-        printf("  精神:   ");
-        filled = player.spirit * bar_len / 100;
-        for (int i = 0; i < bar_len; i++) {
-            if (i < filled) printf("#");
-            else printf("-");
-        }
-        if (player.spirit < 20) printf(COLOR_RED " %d/100 [崩溃!]" COLOR_RESET, player.spirit);
-        else if (player.spirit > 78) printf(COLOR_MAGENTA " %d/100 [兴奋]" COLOR_RESET, player.spirit);
-        else printf(COLOR_CYAN " %d/100" COLOR_RESET, player.spirit);
-        printf("\n");
-        
-        // 显示经验值（带进度条）
-        printf("  经验:   ");
-        int exp_max = player.level * 100;
-        filled = (exp_max > 0) ? player.kun_exp * bar_len / exp_max : 0;
-        if (filled > bar_len) filled = bar_len;
-        for (int i = 0; i < bar_len; i++) {
-            if (i < filled) printf("#");
-            else printf("-");
-        }
-        printf(COLOR_CYAN " %d/%d" COLOR_RESET, player.kun_exp, exp_max);
-        printf("\n\n");
+        tui_draw_main_menu(8);
     }
-    
-    draw_separator();
-    printf(COLOR_BOLD "?? 主菜单\n" COLOR_RESET);
-    printf("┌─────────────────────┬─────────────────────┬─────────────────────┐\n");
-    printf("│ 1. ?? 查看状态      │ 2. ?? 打工赚钱      │ 3. ?? 商城购物      │\n");
-    printf("│ 4. ?? 技能系统      │ 5. ?? 背包物品      │ 6. ?? 任务列表      │\n");
-    printf("│ 7. ?? 宠物系统      │ 8. ?? 公司管理      │ 9. ?? 股票市场      │\n");
-    printf("│10. ?? 房产投资      │11. ?? 成就系统      │12. ? 声望系统      │\n");
-    printf("│13. ?? 好友系统      │14. ?? 游戏统计      │15. ?? 会员商城      │\n");
-    printf("│16. ?? 游戏设置      │17. ?? 帮助指南      │18. ?? 保存游戏      │\n");
-    printf("│19. ?? 手机          │20. ?? 福布斯排行    │21. ?? 睡觉休息      │\n");
-    printf("│22. ?? 医院治疗      │ 0. ?? 退出游戏      │    (结束今天)      │\n");
-    printf("└─────────────────────┴─────────────────────┴─────────────────────┘\n");
-    draw_separator();
-    
-    show_active_events();
-    
-    // 显示状态警告（增强版）
-    if (player.health <= 0) {
-        print_colored(COLOR_RED, "??? 警告：你已经昏迷了！血量0/100，必须去医院抢救！\n");
-    }
-    if (player.hunger < 20) {
-        print_colored(COLOR_RED, "? 警告：你非常饥饿！饱食度%d/100，请尽快去商城买食物！\n", player.hunger);
-    } else if (player.hunger < 40) {
-        print_colored(COLOR_YELLOW, "? 提示：你有点饿了（饱食度%d/100），建议去商城买食物。\n", player.hunger);
-    }
-    if (player.health < 30 && player.health > 0) {
-        print_colored(COLOR_RED, "? 警告：你身受重伤！血量%d/100，请及时治疗！\n", player.health);
-    } else if (player.health < 60 && player.health > 0) {
-        print_colored(COLOR_YELLOW, "? 提示：你的健康状况不佳（血量%d/100），建议注意安全。\n", player.health);
-    }
-    if (player.spirit < 20) {
-        print_colored(COLOR_RED, "? 警告：你的精神处于崩溃边缘！精神%d/100\n", player.spirit);
-    } else if (player.spirit > 78) {
-        print_colored(COLOR_YELLOW, "? 警告：你过于兴奋！小心身体！（精神%d/100）\n", player.spirit);
-    }
-    if (player.daily_time_slots <= 0 && !player.day_ended) {
-        print_colored(COLOR_RED, "? 警告：今天的时间用完了！请结束一天或等待明天。\n");
-    }
+
+    tui_dirty_all = 1;
+    tui_present();
+    tui_sleep_ms(60);
 }
  
  //================ 反调试/反分析保护 ================
@@ -5863,13 +6692,19 @@ void show_main_menu() {
  int main() {
      enable_ansi();
 #ifdef _WIN32
-     // 强制切换控制台为UTF-8编码，解决中文乱码
-     system("chcp 65001 > nul");
      anti_analysis_check();
  #endif
-     show_loading_screen(2000);
+     g_tui_selftest = getenv("TUI_SELFTEST") ? 1 : 0;
+     tui_autokeys = getenv("TUI_AUTOKEYS");
+     tui_lock_size = getenv("TUI_LOCK") ? 1 : 0;
+     tui_init();
+     if (tui_lock_size) tui_resize_canvas(120, 40);
+     show_loading_screen(g_tui_selftest ? 60 : 1400);
      
      init_game();
+     tui_trend_load();
+
+     if (getenv("TUI_SELFTEST")) { tui_selftest(); tui_shutdown(); return 0; }
      
      time_t last_passive_time = time(NULL);
      time_t last_save_time = time(NULL);
@@ -5877,9 +6712,7 @@ void show_main_menu() {
      
      while (1) {
          show_main_menu();
-         
-        printf("请输入选项: ");
-        int choice = get_valid_input(0, 22);
+         int choice = g_menu_choice;
          
          time_t now = time(NULL);
          if (now - last_passive_time >= 3600) {
@@ -5909,6 +6742,7 @@ void show_main_menu() {
             continue; // 回主菜单重新显示
         }
         
+        tui_stream_reset();
         switch (choice) {
              case 1:
                  show_status();
@@ -5916,7 +6750,7 @@ void show_main_menu() {
                  break;
              case 2: {
                  CLEAR_SCREEN();
-                 draw_box("?? 任务中心");
+                 draw_box("任务中心");
                  
                  printf("可用任务：\n\n");
                  for (int i = 0; i < MAX_TASKS; i++) {
@@ -5959,7 +6793,7 @@ void show_main_menu() {
                 // 商城主菜单 - 分为家具商店和食物商店
                 while (true) {
                     CLEAR_SCREEN();
-                    draw_box("?? 商城");
+                    draw_box("商城");
                     
                     printf("请选择商店类型：\n");
                     printf("1. 家具商店（购买家具，获得被动收入）\n");
@@ -5974,7 +6808,7 @@ void show_main_menu() {
                         // 家具商店
                         while (true) {
                             CLEAR_SCREEN();
-                            draw_box("?? 家具商店");
+                            draw_box("家具商店");
                             
                             printf("可用家具：\n\n");
                             for (int i = 0; i < MAX_MARKET; i++) {
@@ -6018,7 +6852,7 @@ void show_main_menu() {
                         // 食物商店 - 从手机菜单迁移过来
                         while (true) {
                             CLEAR_SCREEN();
-                            draw_box("?? 食物商店");
+                            draw_box("食物商店");
                             
                             printf("可购买的食物：\n");
                             printf("1. 面包 - 10坤币（恢复20饱食度）\n");
@@ -6066,9 +6900,9 @@ void show_main_menu() {
                                 if (remove_coins(cost)) {
                                     player.hunger += food_value;
                                     if (player.hunger > 100) player.hunger = 100;
-                                    print_colored(COLOR_GREEN, "? 购买了%s，饱食度+%d\n", food_name, food_value);
+                                    print_colored(COLOR_GREEN, "购买了%s，饱食度+%d\n", food_name, food_value);
                                 } else {
-                                    print_colored(COLOR_RED, "? 坤币不足！\n");
+                                    print_colored(COLOR_RED, "坤币不足！\n");
                                 }
                                 press_any_key();
                             }
@@ -6134,7 +6968,7 @@ void show_main_menu() {
             case 21:
                 // 睡觉休息 - 跳过这一天
                 CLEAR_SCREEN();
-                draw_box("?? 睡觉休息");
+                draw_box("睡觉休息");
                 printf("  你决定提前结束今天的工作，好好休息一觉...\n\n");
                 press_any_key();
                 day_end();
@@ -6143,19 +6977,30 @@ void show_main_menu() {
             case 22:
                 hospital_menu();
                 break;
-            case 0:
-                 CLEAR_SCREEN();
-                 printf(COLOR_YELLOW "\n");
-                 printf("  ╔════════════════════════════════════════════════════════════╗\n");
-                 printf("  ║                                                                ║\n");
-                 printf("  ║                    感谢游玩打工模拟器 v4.0 — 坤城篇！                  ║\n");
-                 printf("  ║                                                                ║\n");
-                 printf("  ║                  坤城会记得每一个认真生活的人。                     ║\n");
-                 printf("  ║                                                                ║\n");
-                 printf("  ╚════════════════════════════════════════════════════════════╝\n");
-                 printf(COLOR_RESET "\n");
+            case 0: {
+                 int i;
                  save_game();
+                 tui_trend_save();
+                 for (i = 0; i < 3; i++) {
+                     tui_begin();
+                     tc_puts_center(0, tui_cv.h / 2 - 2, tui_cv.w, "坤城会记得每一个认真生活的人。", TC_YELLOW, TC_BG);
+                     tc_puts_center(0, tui_cv.h / 2,     tui_cv.w, "感谢游玩 · 打工模拟器 v5.0", TC_WHITE, TC_BG);
+                     tc_puts_center(0, tui_cv.h / 2 + 2, tui_cv.w, "存档已保存", TC_DIM, TC_BG);
+                     tui_present();
+                     tui_sleep_ms(420);
+                     tui_begin();
+                     tui_present();
+                     tui_sleep_ms(160);
+                 }
+                 tui_begin();
+                 tc_puts_center(0, tui_cv.h / 2 - 2, tui_cv.w, "坤城会记得每一个认真生活的人。", TC_YELLOW, TC_BG);
+                 tc_puts_center(0, tui_cv.h / 2,     tui_cv.w, "感谢游玩 · 打工模拟器 v5.0", TC_WHITE, TC_BG);
+                 tc_puts_center(0, tui_cv.h / 2 + 2, tui_cv.w, "存档已保存", TC_DIM, TC_BG);
+                 tui_present();
+                 tui_sleep_ms(900);
+                 tui_shutdown();
                  return 0;
+            }
          }
          
          random_event();
