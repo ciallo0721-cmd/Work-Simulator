@@ -1,0 +1,951 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>打工模拟器 — 坤城 KUN CITY</title>
+<style>
+@import url('https://fonts.googleapis.com/css2?family=Noto+Serif+SC:wght@400;600;900&family=Cinzel:wght@600;800&display=swap');
+:root{
+  --gold:#e8c15a;--gold-dim:#a8863a;--ink:#e9e2d0;--dim:#8f8a7a;
+  --red:#e05a4e;--green:#6fbf73;--blue:#6aa9d8;--pink:#d97b9c;--purple:#a98cd6;--cyan:#5fbfbf;
+  --glass:rgba(16,18,28,.55);--glass2:rgba(22,26,40,.65);--line:rgba(232,193,90,.18);
+}
+*{box-sizing:border-box;margin:0;padding:0}
+html,body{height:100%}
+body{font-family:"Noto Serif SC","Microsoft YaHei",serif;color:var(--ink);overflow-x:hidden;
+  background:#0a0c14;}
+.num{font-family:"Cinzel","Noto Serif SC",serif;letter-spacing:1px}
+
+/* ================= 天空（随季节+时辰变化） ================= */
+#sky{position:fixed;inset:0;z-index:-4;transition:background 3s ease}
+#sky.grad-spring-m{background:linear-gradient(180deg,#2c3e5d 0%,#5d7ba6 35%,#c99b7a 70%,#3a3148 100%)}
+#sky.grad-spring-a{background:linear-gradient(180deg,#31456b 0%,#6b88ad 40%,#a9b4c4 75%,#423a52 100%)}
+#sky.grad-spring-e{background:linear-gradient(180deg,#1d2540 0%,#4a4370 45%,#b06a5e 75%,#2c2438 100%)}
+#sky.grad-summer-m{background:linear-gradient(180deg,#1e3a5f 0%,#4f83b0 40%,#8fc1d4 70%,#2e3350 100%)}
+#sky.grad-summer-a{background:linear-gradient(180deg,#26527a 0%,#5b93b8 45%,#c2d3d8 75%,#353d55 100%)}
+#sky.grad-summer-e{background:linear-gradient(180deg,#131c38 0%,#3d3a68 45%,#c25f56 78%,#241f34 100%)}
+#sky.grad-autumn-m{background:linear-gradient(180deg,#3a3550 0%,#8a6e5e 40%,#d1a05e 72%,#3d2f3a 100%)}
+#sky.grad-autumn-a{background:linear-gradient(180deg,#423a55 0%,#96755c 45%,#c9a06a 75%,#463544 100%)}
+#sky.grad-autumn-e{background:linear-gradient(180deg,#241f36 0%,#5c4050 45%,#b3583f 76%,#2b2130 100%)}
+#sky.grad-winter-m{background:linear-gradient(180deg,#1c2438 0%,#4a5a74 40%,#93a5b8 72%,#2c3348 100%)}
+#sky.grad-winter-a{background:linear-gradient(180deg,#222c44 0%,#56677f 45%,#a3b3c2 75%,#313a50 100%)}
+#sky.grad-winter-e{background:linear-gradient(180deg,#131828 0%,#3a3f5c 45%,#8a5a58 76%,#232838 100%)}
+#stars{position:fixed;inset:0;z-index:-3;opacity:0;transition:opacity 3s ease;pointer-events:none}
+#stars i{position:absolute;background:#fff;border-radius:50%;animation:twinkle 4s ease-in-out infinite}
+@keyframes twinkle{0%,100%{opacity:.15}50%{opacity:.9}}
+#luminary{position:fixed;z-index:-3;width:90px;height:90px;border-radius:50%;pointer-events:none;
+  transition:all 3s ease;filter:blur(1px)}
+#luminary.sun{background:radial-gradient(circle,#fff7dd 0%,#ffd98a 45%,rgba(255,200,110,0) 72%);
+  box-shadow:0 0 80px 40px rgba(255,210,130,.25)}
+#luminary.moon{background:radial-gradient(circle,#f4f6ff 0%,#c9d2ef 45%,rgba(180,195,240,0) 70%);
+  box-shadow:0 0 60px 30px rgba(190,205,245,.18)}
+/* 城市剪影 */
+#skyline{position:fixed;left:0;right:0;bottom:0;height:26vh;min-height:170px;z-index:-2;pointer-events:none;
+  opacity:.9;transition:opacity 3s ease}
+/* 粒子层 */
+#fx{position:fixed;inset:0;z-index:-1;pointer-events:none;overflow:hidden}
+.particle{position:absolute;top:-4vh;will-change:transform;animation:fall linear infinite}
+@keyframes fall{
+  0%{transform:translate3d(0,-5vh,0) rotate(0deg)}
+  100%{transform:translate3d(6vw,108vh,0) rotate(340deg)}
+}
+.petal{width:9px;height:7px;border-radius:60% 40% 55% 45%;background:rgba(255,183,197,.75)}
+.firefly{width:4px;height:4px;border-radius:50%;background:#ffe9a3;box-shadow:0 0 8px 3px rgba(255,233,150,.55);
+  animation:fall linear infinite, glowf 2.4s ease-in-out infinite alternate}
+@keyframes glowf{from{opacity:.25}to{opacity:1}}
+.leaf{width:11px;height:8px;border-radius:0 70% 20% 70%;background:rgba(214,140,74,.8)}
+.snow{width:6px;height:6px;border-radius:50%;background:rgba(255,255,255,.85)}
+/* 暗角 + 颗粒 */
+#vignette{position:fixed;inset:0;z-index:60;pointer-events:none;
+  background:radial-gradient(ellipse at 50% 45%,transparent 55%,rgba(5,6,12,.55) 100%)}
+#grain{position:fixed;inset:0;z-index:61;pointer-events:none;opacity:.05;
+  background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='140' height='140'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='2'/%3E%3C/filter%3E%3Crect width='140' height='140' filter='url(%23n)'/%3E%3C/svg%3E")}
+/* 受击红闪 */
+#hurt{position:fixed;inset:0;z-index:59;pointer-events:none;opacity:0;
+  background:radial-gradient(ellipse at 50% 50%,transparent 40%,rgba(190,40,30,.5) 100%);transition:opacity .12s}
+#hurt.on{opacity:1}
+
+/* ================= 开场标题画面 ================= */
+#title-screen{position:fixed;inset:0;z-index:100;display:flex;flex-direction:column;align-items:center;
+  justify-content:center;background:radial-gradient(ellipse at 50% 30%,rgba(20,26,46,.35),rgba(6,8,16,.88) 75%);
+  backdrop-filter:blur(3px);transition:opacity 1.2s ease,visibility 1.2s}
+#title-screen.off{opacity:0;visibility:hidden;pointer-events:none}
+#title-screen h1{font-size:min(11vw,64px);font-weight:900;letter-spacing:.35em;text-indent:.35em;
+  color:var(--ink);text-shadow:0 0 30px rgba(232,193,90,.35),0 2px 0 rgba(0,0,0,.4);
+  animation:titleIn 1.6s cubic-bezier(.2,.8,.2,1) both}
+#title-screen .en{font-family:"Cinzel",serif;font-size:13px;letter-spacing:.9em;text-indent:.9em;color:var(--gold-dim);
+  margin-top:14px;animation:titleIn 1.6s .25s cubic-bezier(.2,.8,.2,1) both}
+#title-screen .motto{margin-top:26px;font-size:14px;color:var(--dim);letter-spacing:.2em;
+  animation:titleIn 1.6s .5s both}
+@keyframes titleIn{from{opacity:0;transform:translateY(26px);filter:blur(6px)}to{opacity:1;transform:none;filter:none}}
+#title-screen .btns{margin-top:48px;display:flex;gap:22px;animation:titleIn 1.6s .75s both}
+.startbtn{position:relative;padding:13px 44px;background:none;border:1px solid var(--line);color:var(--ink);
+  font-family:inherit;font-size:16px;letter-spacing:.4em;text-indent:.4em;cursor:pointer;overflow:hidden;
+  transition:.35s;border-radius:2px}
+.startbtn::after{content:"";position:absolute;top:0;left:-120%;width:60%;height:100%;
+  background:linear-gradient(100deg,transparent,rgba(232,193,90,.28),transparent);transition:none}
+.startbtn:hover{border-color:var(--gold);color:var(--gold);box-shadow:0 0 24px rgba(232,193,90,.25),inset 0 0 18px rgba(232,193,90,.08)}
+.startbtn:hover::after{left:130%;transition:left .7s ease}
+/* 呼吸提示 */
+#title-screen .breath{position:absolute;bottom:34px;font-size:11px;color:var(--dim);letter-spacing:.3em;
+  animation:breath 3.2s ease-in-out infinite}
+@keyframes breath{0%,100%{opacity:.25}50%{opacity:.85}}
+
+/* ================= 主界面 ================= */
+#app{position:relative;z-index:1;max-width:880px;margin:0 auto;padding:14px 16px 40px;min-height:100vh;
+  transition:filter .4s,opacity .4s}
+#app.dim{filter:blur(6px) brightness(.6);pointer-events:none}
+#app.shake{animation:shake .4s}
+@keyframes shake{0%,100%{transform:none}20%{transform:translate(-7px,2px)}40%{transform:translate(6px,-3px)}60%{transform:translate(-4px,-2px)}80%{transform:translate(3px,2px)}}
+
+/* HUD */
+#hud{position:sticky;top:10px;z-index:40;background:var(--glass);backdrop-filter:blur(14px) saturate(1.2);
+  border:1px solid var(--line);border-radius:14px;padding:12px 16px;margin-bottom:14px;
+  box-shadow:0 10px 40px rgba(0,0,0,.45),inset 0 1px 0 rgba(255,255,255,.05)}
+#hud .row1{display:flex;align-items:center;gap:16px}
+#lvring{position:relative;width:58px;height:58px;flex:none}
+#lvring svg{transform:rotate(-90deg)}
+#lvring .lvtxt{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center}
+#lvring .lvtxt b{font-size:19px;color:var(--gold)}
+#lvring .lvtxt span{font-size:9px;color:var(--dim);letter-spacing:2px}
+#res{flex:1;display:grid;grid-template-columns:repeat(3,1fr);gap:10px 18px}
+.res .k{font-size:10px;color:var(--dim);letter-spacing:3px;display:flex;justify-content:space-between}
+.res .v{font-size:19px;margin-top:1px}
+.bar{height:4px;background:rgba(255,255,255,.08);border-radius:2px;margin-top:5px;overflow:hidden}
+.bar i{display:block;height:100%;border-radius:2px;transition:width .8s cubic-bezier(.2,.8,.2,1);position:relative}
+.bar i::after{content:"";position:absolute;inset:0;background:linear-gradient(90deg,transparent,rgba(255,255,255,.35),transparent);
+  animation:sheen 2.6s linear infinite}
+@keyframes sheen{from{transform:translateX(-100%)}to{transform:translateX(200%)}}
+#daychip{flex:none;text-align:right}
+#daychip .d1{font-size:11px;color:var(--dim);letter-spacing:3px}
+#daychip .d2{font-size:15px;margin-top:2px}
+#daychip .d2 b{color:var(--gold);font-size:22px}
+.lowpulse{animation:lowp 1.1s ease-in-out infinite}
+@keyframes lowp{0%,100%{color:var(--red);text-shadow:0 0 6px rgba(224,90,78,.4)}50%{color:#ff8a7d;text-shadow:0 0 16px rgba(224,90,78,.9)}}
+
+/* 时辰 */
+#phase{display:flex;gap:6px;justify-content:center;margin:0 0 14px}
+.ph{flex:1;max-width:110px;text-align:center;padding:7px 0;border-radius:8px;font-size:12px;letter-spacing:4px;
+  color:var(--dim);background:var(--glass);border:1px solid transparent;backdrop-filter:blur(10px);transition:.6s}
+.ph.now{color:var(--gold);border-color:var(--line);box-shadow:0 0 18px rgba(232,193,90,.12),inset 0 0 14px rgba(232,193,90,.05)}
+.ph.gone{opacity:.3;text-decoration:line-through}
+
+/* 标签页 */
+nav{display:flex;gap:6px;margin-bottom:14px}
+nav button{flex:1;padding:10px 0;background:var(--glass);backdrop-filter:blur(10px);border:1px solid transparent;
+  color:var(--dim);border-radius:10px;cursor:pointer;font-family:inherit;font-size:14px;letter-spacing:3px;
+  transition:.3s;position:relative}
+nav button:hover{color:var(--ink)}
+nav button.on{color:var(--gold);border-color:var(--line);background:var(--glass2);
+  box-shadow:0 0 22px rgba(232,193,90,.1)}
+nav button.on::before{content:"";position:absolute;left:50%;bottom:-1px;transform:translateX(-50%);
+  width:36%;height:2px;background:var(--gold);border-radius:2px;box-shadow:0 0 8px var(--gold)}
+
+/* 页面与卡片 */
+.page{display:none;animation:pageIn .5s cubic-bezier(.2,.8,.2,1)}
+.page.on{display:block}
+@keyframes pageIn{from{opacity:0;transform:translateY(14px)}to{opacity:1;transform:none}}
+.card{background:var(--glass);backdrop-filter:blur(12px) saturate(1.15);border:1px solid rgba(255,255,255,.06);
+  border-radius:14px;padding:16px 18px;margin-bottom:12px;box-shadow:0 8px 32px rgba(0,0,0,.35)}
+.card h3{font-size:14px;letter-spacing:5px;color:var(--ink);font-weight:600;display:flex;align-items:center;gap:12px;margin-bottom:10px}
+.card h3::before{content:"";width:3px;height:15px;background:var(--gold);border-radius:2px;box-shadow:0 0 8px var(--gold)}
+.card h3 .h-sub{font-size:10px;letter-spacing:2px;color:var(--dim);font-weight:400}
+
+/* 行条目 */
+.row{display:flex;justify-content:space-between;align-items:center;gap:10px;padding:11px 6px;
+  border-bottom:1px solid rgba(255,255,255,.05);transition:background .3s;border-radius:6px}
+.row:hover{background:rgba(255,255,255,.03)}
+.row:last-child{border-bottom:none}
+.row .name{font-size:15px;font-weight:600}
+.row .desc{font-size:12px;color:var(--dim);margin-top:3px;line-height:1.5}
+.row .tags{font-size:11px;color:var(--dim);margin-top:4px;letter-spacing:1px}
+.row .tags b{color:var(--gold);font-weight:400}
+
+button.act{background:rgba(232,193,90,.08);border:1px solid var(--line);color:var(--gold);border-radius:8px;
+  padding:7px 16px;cursor:pointer;font-family:inherit;font-size:13px;letter-spacing:2px;white-space:nowrap;
+  transition:.25s;position:relative;overflow:hidden}
+button.act::after{content:"";position:absolute;top:0;left:-120%;width:50%;height:100%;
+  background:linear-gradient(100deg,transparent,rgba(255,255,255,.22),transparent)}
+button.act:hover:not(:disabled){background:rgba(232,193,90,.18);box-shadow:0 0 16px rgba(232,193,90,.22);color:#ffe9ad}
+button.act:hover:not(:disabled)::after{left:140%;transition:left .6s ease}
+button.act:active:not(:disabled){transform:scale(.96)}
+button.act:disabled{opacity:.3;cursor:not-allowed;border-color:rgba(255,255,255,.08);color:var(--dim);background:none}
+button.act.ghost{border-color:rgba(255,255,255,.14);color:var(--dim)}
+
+/* 日志（打字机） */
+#log{height:340px;overflow-y:auto;padding:4px 8px;font-size:13.5px;line-height:2;scroll-behavior:smooth}
+#log::-webkit-scrollbar{width:4px}#log::-webkit-scrollbar-thumb{background:var(--line);border-radius:2px}
+#log p{margin:0;animation:logIn .4s ease}
+@keyframes logIn{from{opacity:0;transform:translateX(-8px)}to{opacity:1;transform:none}}
+.c-y{color:var(--gold)}.c-r{color:var(--red)}.c-g{color:var(--green)}.c-b{color:var(--blue)}
+.c-p{color:var(--pink)}.c-d{color:var(--dim)}.c-c{color:var(--cyan)}.c-v{color:var(--purple)}
+.caret{display:inline-block;width:8px;height:14px;background:var(--gold);vertical-align:-2px;
+  animation:blink .8s steps(1) infinite;margin-left:2px}
+@keyframes blink{50%{opacity:0}}
+
+/* 弹窗（对话框式） */
+#modal{position:fixed;inset:0;z-index:70;display:none;align-items:center;justify-content:center}
+#modal.on{display:flex}
+#modal .mask{position:absolute;inset:0;background:rgba(4,6,14,.6);backdrop-filter:blur(5px);
+  animation:fadein .35s ease}
+@keyframes fadein{from{opacity:0}to{opacity:1}}
+#modal .lbox{position:absolute;left:0;right:0;height:9vh;min-height:48px;background:rgba(4,6,12,.9);
+  box-shadow:0 0 30px rgba(0,0,0,.8)}
+#modal .lbox.t{top:0;animation:slideDown .45s cubic-bezier(.2,.8,.2,1)}
+#modal .lbox.b{bottom:0;animation:slideUp .45s cubic-bezier(.2,.8,.2,1)}
+@keyframes slideDown{from{transform:translateY(-100%)}to{transform:none}}
+@keyframes slideUp{from{transform:translateY(100%)}to{transform:none}}
+#modal .box{position:relative;background:linear-gradient(160deg,rgba(24,28,44,.92),rgba(14,17,30,.94));
+  border:1px solid var(--line);border-radius:6px;padding:26px 28px;max-width:480px;width:92%;
+  box-shadow:0 24px 80px rgba(0,0,0,.7),inset 0 1px 0 rgba(255,255,255,.06);
+  animation:dlgIn .45s cubic-bezier(.2,.8,.2,1)}
+@keyframes dlgIn{from{opacity:0;transform:translateY(30px) scale(.97)}to{opacity:1;transform:none}}
+#modal h4{color:var(--gold);margin-bottom:10px;font-size:16px;letter-spacing:3px;font-weight:600}
+#modal h4::before{content:"◈ ";color:var(--gold-dim)}
+#modal .body{font-size:13.5px;line-height:2;color:var(--ink);margin-bottom:18px;white-space:pre-line}
+#modal .opts{display:flex;flex-direction:column;gap:9px}
+#modal .opts button{padding:11px 16px;text-align:left;letter-spacing:1px}
+
+/* 成就弹窗 */
+#toast{position:fixed;top:-120px;left:50%;transform:translateX(-50%);z-index:80;
+  background:linear-gradient(135deg,rgba(44,36,14,.95),rgba(20,18,10,.95));border:1px solid var(--gold-dim);
+  border-radius:10px;padding:13px 26px 13px 20px;display:flex;align-items:center;gap:14px;
+  box-shadow:0 12px 44px rgba(0,0,0,.6),0 0 26px rgba(232,193,90,.25);transition:top .6s cubic-bezier(.2,.8,.2,1)}
+#toast.on{top:18px}
+#toast .ic{font-size:24px;animation:shine 1.6s ease infinite}
+@keyframes shine{0%,100%{filter:drop-shadow(0 0 3px rgba(232,193,90,.6))}50%{filter:drop-shadow(0 0 12px rgba(232,193,90,1))}}
+#toast .tt{font-size:11px;letter-spacing:4px;color:var(--gold-dim)}
+#toast .tn{font-size:16px;font-weight:600;color:var(--gold);letter-spacing:2px}
+#toast .td{font-size:11px;color:var(--dim);margin-top:2px;max-width:340px}
+
+/* 成就/股票等 */
+.ach{display:flex;justify-content:space-between;align-items:center;gap:10px;padding:10px 6px;
+  border-bottom:1px solid rgba(255,255,255,.05)}
+.ach:last-child{border:none}
+.ach .name{font-weight:600;font-size:14px;color:var(--dim)}
+.ach .desc{font-size:12px;color:var(--dim);opacity:.7;margin-top:2px;line-height:1.5}
+.ach.done .name{color:var(--gold)}
+.ach.done .desc{opacity:1}
+.ach .st{font-size:12px;white-space:nowrap;letter-spacing:2px}
+.stockrow{display:grid;grid-template-columns:1fr 70px 62px 56px 62px 118px;gap:6px;align-items:center;
+  padding:8px 4px;border-bottom:1px solid rgba(255,255,255,.05);font-size:13px}
+.stockrow:last-child{border:none}
+.stockrow .nm{font-weight:600}
+.up{color:var(--green)}.down{color:var(--red)}
+.flashUp{animation:fUp .8s ease}.flashDown{animation:fDn .8s ease}
+@keyframes fUp{0%{background:rgba(111,191,115,.25)}100%{background:none}}
+@keyframes fDn{0%{background:rgba(224,90,78,.25)}100%{background:none}}
+
+.footer-tip{text-align:center;color:var(--dim);font-size:11px;letter-spacing:4px;margin:22px 0 8px;opacity:.6}
+
+@media(max-width:640px){
+  #res{grid-template-columns:repeat(3,1fr);gap:8px}
+  .stockrow{grid-template-columns:1fr 58px 50px 100px}
+  .stockrow .hideS{display:none}
+  #hud .row1{flex-wrap:wrap}
+  #daychip{width:100%;text-align:left;margin-top:6px}
+}
+</style>
+</head>
+<body>
+
+<!-- 世界层 -->
+<div id="sky"></div>
+<div id="stars"></div>
+<div id="luminary" class="sun"></div>
+<svg id="skyline" viewBox="0 0 1440 260" preserveAspectRatio="none">
+  <g fill="#0d1020">
+    <path d="M0,260 L0,190 L60,190 L60,150 L110,150 L110,200 L170,200 L170,120 L200,120 L200,95 L215,95 L215,120 L245,120 L245,200 L310,200 L310,160 L370,160 L370,210 L430,210 L430,130 L460,130 L460,100 L475,100 L475,60 L485,60 L485,100 L500,100 L500,130 L530,130 L530,210 L600,210 L600,170 L660,170 L660,220 L720,220 L720,140 L760,140 L760,110 L772,110 L772,70 L780,70 L780,110 L792,110 L792,140 L830,140 L830,220 L900,220 L900,180 L960,180 L960,230 L1020,230 L1020,150 L1050,150 L1050,120 L1065,120 L1065,85 L1073,85 L1073,120 L1088,120 L1088,150 L1120,150 L1120,230 L1190,230 L1190,190 L1250,190 L1250,210 L1310,210 L1310,160 L1360,160 L1360,200 L1440,200 L1440,260 Z"/>
+  </g>
+  <g fill="#e8c15a" id="windows" opacity=".55"></g>
+</svg>
+<div id="fx"></div>
+<div id="vignette"></div>
+<div id="grain"></div>
+<div id="hurt"></div>
+
+<!-- 开场 -->
+<div id="title-screen">
+  <h1>打 工 模 拟 器</h1>
+  <div class="en">KUN CITY · CHAPTER IV</div>
+  <div class="motto">在一个人人都想往上爬的城市里，你要成为什么样的人？</div>
+  <div class="btns">
+    <button class="startbtn" id="btn-new">新的开始</button>
+    <button class="startbtn" id="btn-continue">继续旅程</button>
+  </div>
+  <div class="breath">— 坤城 · 常住人口 3,000,000 —</div>
+</div>
+
+<!-- 主界面 -->
+<div id="app" class="dim">
+  <div id="hud">
+    <div class="row1">
+      <div id="lvring">
+        <svg width="58" height="58">
+          <circle cx="29" cy="29" r="25" fill="none" stroke="rgba(255,255,255,.08)" stroke-width="3"/>
+          <circle id="lvarc" cx="29" cy="29" r="25" fill="none" stroke="#e8c15a" stroke-width="3"
+            stroke-linecap="round" stroke-dasharray="157" stroke-dashoffset="157" style="transition:stroke-dashoffset .8s;filter:drop-shadow(0 0 4px rgba(232,193,90,.6))"/>
+        </svg>
+        <div class="lvtxt"><b class="num" id="s-level">1</b><span>LEVEL</span></div>
+      </div>
+      <div id="res">
+        <div class="res"><div class="k"><span>坤币 KUN</span><span id="s-exp" class="c-d" style="letter-spacing:0"></span></div><div class="v num c-y" id="s-coin">0</div></div>
+        <div class="res"><div class="k"><span>血量 HP</span></div><div class="v num" id="s-hp">100</div><div class="bar"><i id="b-hp" style="background:linear-gradient(90deg,#6fbf73,#8fd98f)"></i></div></div>
+        <div class="res"><div class="k"><span>精神 SAN</span></div><div class="v num" id="s-sp">50</div><div class="bar"><i id="b-sp" style="background:linear-gradient(90deg,#6aa9d8,#9cc6e8)"></i></div></div>
+        <div class="res"><div class="k"><span>饱食 HUNGER</span></div><div class="v num" id="s-hu">100</div><div class="bar"><i id="b-hu" style="background:linear-gradient(90deg,#e8c15a,#f5d98a)"></i></div></div>
+        <div class="res"><div class="k"><span>时间槽 SLOTS</span></div><div class="v num" id="s-slots">3/3</div></div>
+        <div class="res"><div class="k"><span>季节 SEASON</span></div><div class="v" id="s-season" style="font-size:15px">春</div></div>
+      </div>
+      <div id="daychip">
+        <div class="d1">DAY</div>
+        <div class="d2 num">第 <b id="s-day">1</b> 天</div>
+      </div>
+    </div>
+  </div>
+
+  <div id="phase">
+    <div class="ph" data-ph="0">上午</div>
+    <div class="ph" data-ph="1">下午</div>
+    <div class="ph" data-ph="2">晚上</div>
+  </div>
+
+  <nav>
+    <button data-p="work" class="on">打 工</button>
+    <button data-p="stock">股 市</button>
+    <button data-p="skill">技 能</button>
+    <button data-p="ach">成 就</button>
+    <button data-p="log">日 志</button>
+  </nav>
+
+  <div class="page on" id="p-work">
+    <div class="card">
+      <h3>打工列表 <span class="h-sub">KUN CITY JOBS</span></h3>
+      <div id="task-list"></div>
+    </div>
+    <div class="card">
+      <h3>日常 <span class="h-sub">DAILY</span></h3>
+      <div class="row">
+        <div><div class="name">睡觉</div><div class="desc">提前结束今天 — 结算日报，扣除房租与餐饮，恢复血量与精神</div></div>
+        <button class="act" id="btn-sleep">入 睡</button>
+      </div>
+      <div class="row">
+        <div><div class="name">吃盒饭 <span class="c-d" style="font-size:12px">-30 坤币</span></div><div class="desc">恢复 30 点饱食度</div></div>
+        <button class="act" id="btn-eat">用 餐</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="page" id="p-stock">
+    <div class="card">
+      <h3>坤城股票市场 <span class="h-sub">每日结算时更新 · 买10股 / 卖清仓</span></h3>
+      <div id="stock-list"></div>
+    </div>
+  </div>
+
+  <div class="page" id="p-skill">
+    <div class="card">
+      <h3>技能 <span class="h-sub">剩余技能点 <b class="c-y num" id="skill-pts">0</b></span></h3>
+      <div id="skill-list"></div>
+    </div>
+  </div>
+
+  <div class="page" id="p-ach">
+    <div class="card">
+      <h3>成就 <span class="h-sub"><span id="ach-count">0/30</span> UNLOCKED</span></h3>
+      <div id="ach-list"></div>
+    </div>
+  </div>
+
+  <div class="page" id="p-log">
+    <div class="card">
+      <h3>坤城日志 <span class="h-sub">CITY LOG</span></h3>
+      <div id="log"></div>
+    </div>
+    <div class="card">
+      <h3>存档 <span class="h-sub">SAVE</span></h3>
+      <div class="row">
+        <div><div class="name">保存 / 读取</div><div class="desc">自动保存于每次结算 · 手动存档随时可点</div></div>
+        <div style="display:flex;gap:6px">
+          <button class="act" id="btn-save">保存</button>
+          <button class="act ghost" id="btn-load">读取</button>
+          <button class="act ghost" id="btn-reset">重开</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="footer-tip">KUN CITY — 没有人知道明天会怎样</div>
+</div>
+
+<!-- 弹窗 -->
+<div id="modal">
+  <div class="mask"></div>
+  <div class="lbox t"></div>
+  <div class="lbox b"></div>
+  <div class="box">
+    <h4 id="m-title"></h4>
+    <div class="body" id="m-body"></div>
+    <div class="opts" id="m-opts"></div>
+  </div>
+</div>
+
+<!-- 成就弹窗 -->
+<div id="toast">
+  <div class="ic">🏆</div>
+  <div>
+    <div class="tt">ACHIEVEMENT UNLOCKED</div>
+    <div class="tn" id="t-name"></div>
+    <div class="td" id="t-desc"></div>
+  </div>
+</div>
+
+<script>
+"use strict";
+//================ 数据（移植自 打工模拟器.cpp v4.0） ================
+const TASKS=[
+ {name:"出租车司机",lv:1,income:50,exp:10,cost:0,rate:.90,desc:"在老城区和CBD之间穿梭，接送坤城的过客",sk:{}},
+ {name:"伐木工人",lv:2,income:100,exp:20,cost:500,rate:.80,desc:"在开发区外围的林地挥洒汗水",sk:{1:1}},
+ {name:"外卖配送",lv:3,income:200,exp:30,cost:2000,rate:.85,desc:"骑着电动车飞奔在坤城的大街小巷",sk:{0:1,5:1}},
+ {name:"餐厅服务生",lv:5,income:300,exp:40,cost:5000,rate:.75,desc:"在CBD的高级餐厅里笑脸迎人",sk:{4:2,0:1}},
+ {name:"程序员",lv:8,income:500,exp:60,cost:10000,rate:.70,desc:"在科技园的格子间里敲代码改Bug",sk:{2:3,6:2}},
+ {name:"股票交易员",lv:10,income:800,exp:80,cost:20000,rate:.60,desc:"在坤城金融中心的交易大厅搏杀",sk:{2:4,3:3,8:2}},
+ {name:"房地产经纪人",lv:15,income:1200,exp:100,cost:50000,rate:.65,desc:"带客户看遍坤城各区的高端楼盘",sk:{4:5,8:4,9:3}},
+ {name:"企业家",lv:20,income:2000,exp:150,cost:100000,rate:.55,desc:"在坤城创立自己的公司，雇佣第一批员工",sk:{7:6,9:5,2:4}},
+ {name:"投资者",lv:25,income:3000,exp:200,cost:200000,rate:.50,desc:"坐在办公室里决策——投资坤城的未来",sk:{2:7,3:6,8:5}},
+ {name:"神秘探险",lv:30,income:5000,exp:300,cost:500000,rate:.40,desc:"探索坤城不为人知的角落——有些地方地图上没有",sk:{5:8,3:7,1:6}},
+];
+const SKILL_NAMES=["速度","力量","智力","幸运","魅力","耐力","创造力","领导力","谈判技巧","管理能力"];
+const DIFFS=[
+ {name:"摸鱼",mult:.6,slot:1,hp:0,risk:0,desc:"轻松安全 · 收入×0.6"},
+ {name:"普通",mult:1,slot:1,hp:0,risk:0,desc:"标准模式 · 收入×1.0"},
+ {name:"加班",mult:1.5,slot:2,hp:5,risk:0,desc:"收入×1.5 · 健康-5 · 消耗2槽"},
+ {name:"拼命",mult:2.5,slot:2,hp:15,risk:5,desc:"收入×2.5 · 健康-15 · 猝死风险5% · 消耗2槽"},
+];
+const MICRO_EVENTS=[
+ {id:-1,t:"刁钻客户",d:"一位坤城的本地阿姨对你的服务各种挑剔，最后扔下一句「算了就这样吧」。",sp:-10,hp:0,c:-30},
+ {id:-1,t:"意外小费",d:"一个戴着金链子的商人因为赶时间，多给了你一张钞票。坤城的有钱人就是这么任性。",sp:5,hp:0,c:80},
+ {id:-1,t:"同行抢单",d:"你的同行在你眼皮底下抢走了一单生意。他回头冲你笑了笑。",sp:-5,hp:0,c:-50},
+ {id:-1,t:"城管来了",d:"远处的城管巡逻车吸引了所有人的注意，你趁机快速完成了今天的工作。",sp:0,hp:0,c:40},
+ {id:-1,t:"迷路的外地人",d:"一个外地游客问你去坤城塔的路。你花了几分钟给他指路，他感激地塞给你一点钱。",sp:5,hp:0,c:20},
+ {id:-1,t:"设备故障",d:"你的工作设备突然出了故障，修了半天才弄好。今天真是诸事不顺。",sp:-15,hp:0,c:-100},
+ {id:-1,t:"老熟人",d:"在街上遇到了之前在坤城认识的人，聊了几句。人与人之间的温度，在坤城这种地方很难得。",sp:10,hp:0,c:0},
+ {id:-1,t:"暴雨突降",d:"坤城的夏天说变就变，一场暴雨打得你措手不及。淋湿了，但活还得干完。",sp:-5,hp:-5,c:-20},
+ {id:-1,t:"幸运日",d:"今天不知道为什么，一切都特别顺利。坤城的空气里好像有股甜甜的味道。",sp:15,hp:0,c:60},
+ {id:-1,t:"黑中介",d:"一个自称中介的人找上门，说有个「好活儿」要介绍给你。你察觉到不对劲。",choice:"scammer"},
+ {id:0,t:"深夜乘客",d:"凌晨两点，一个穿风衣的男人上了你的车。「去开发区，别问为什么。」",sp:-10,hp:0,c:150},
+ {id:0,t:"堵在CBD",d:"坤城CBD的下班高峰，你在车流里堵了整整40分钟。乘客迟到了，但还是在App上给了你差评。",sp:-15,hp:0,c:-80},
+ {id:0,t:"遗落物品",d:"乘客下车后，你发现后座留下了一个信封。里面是一叠现金和一张写着「帮帮我」的字条。",choice:"envelope"},
+ {id:4,t:"灰色外包",d:"一个陌生人通过私信联系你，问你能不能帮他「绕过」某个系统的防火墙。报酬相当诱人。",choice:"gray"},
+ {id:4,t:"通宵上线",d:"产品经理说今晚必须上线。凌晨三点的科技园，只有你的屏幕还亮着。",sp:-20,hp:-10,c:200},
+ {id:4,t:"开源贡献",d:"你在GitHub上的一个PR被坤城本地的大佬merge了，成就感满满。",sp:20,hp:0,c:0},
+ {id:2,t:"超时罚款",d:"一个意外的交通事故让你延误了三单，平台毫不留情地扣了你的钱。",sp:-10,hp:0,c:-120},
+ {id:2,t:"暖心顾客",d:"一个住在老城区的大学生给你打了五星好评，还附了一句「辛苦了，谢谢」。",sp:10,hp:0,c:30},
+ {id:3,t:"难缠的VIP",d:"CBD某公司老总带了客户来吃饭，对每道菜都吹毛求疵。老板赔了不是还倒贴了一瓶酒。",sp:-15,hp:0,c:-50},
+ {id:3,t:"美食评论家",d:"一位戴着眼镜的中年人默默吃完了一整顿饭。后来你在点评App上看到了他的五星长文。",sp:10,hp:0,c:50},
+];
+const STOCKS=[["坤坤科技",100,10],["外卖速递",50,15],["坤城地产",200,8],["坤能集团",150,12],["星光传媒",80,20],
+["坤城银行",120,9],["大江医药",90,11],["天虹通信",180,14],["龙腾制造",70,16],["碧水环保",60,7],
+["烈火能源",110,13],["青云教育",40,18],["金盾安保",160,6],["风驰物流",85,17],["华美百货",75,19],
+["北斗导航",250,5],["南山旅游",95,10],["星辰半导体",300,22],["绿野农业",45,25],["白鲸渔业",55,14],
+["九鼎建筑",140,8],["天机软件",220,16],["凤凰传媒",130,12],["云梦游戏",170,21],["紫金矿业",105,9]];
+const ACHS=[
+ ["第一桶金","赚取100坤币——坤城的第一步"],
+ ["家具收藏家","收集5件家具——老城区的出租屋开始有家的样子了"],
+ ["打工达人","完成50次任务——坤城的各行各业都留下了你的脚印"],
+ ["股市新手","股票投资获利1000坤币——第一次尝到资本的甜头"],
+ ["幸运儿","赢得彩票大奖——坤城今天对你微笑了"],
+ ["百万富翁","拥有100万坤币——在坤城，你终于可以抬起头了"],
+ ["等级大师","达到50级——坤城的每个角落都认识你了"],
+ ["技能专家","将一项技能升到10级——在这个领域，坤城没人比你更懂"],
+ ["任务狂人","完成1000次任务——你的身体发出了最后一次警告，然后放弃了警告"],
+ ["社交达人","拥有5个好友——坤城有三百万人，其中五个认可了你"],
+ ["宠物爱好者","拥有3只宠物——在坤城，它们是你最忠诚的伙伴"],
+ ["房产大亨","拥有5处房产——从老城区到富人区，坤城到处都有你的家"],
+ ["全技能大师","所有技能达到5级——技多不压身，在坤城尤其如此"],
+ ["限定收藏家","收集所有限定物品——坤城的限量版，都归你了"],
+ ["成就猎人","解锁20个成就——坤城的故事，你正在一页页翻开"],
+ ["初次转生","完成第一次声望重置——那些杀不死你的……其实差点就杀死你了"],
+ ["传奇重生","达到声望等级5——坤城的人开始用'传说'来称呼你"],
+ ["BOSS克星","击败10次BOSS——坤城的地下世界都知道你的名字"],
+ ["节日之魂","参与5次节日活动——坤城的每一个节日你都没有缺席"],
+ ["合成大师","合成10次物品——废品在你手里就变成了宝贝"],
+ ["人精","在聊天室成功识破3个骗子的谎言——坤城的骗子都开始互相提醒：小心那个太聪明的"],
+ ["赌怪","靠聊天室内幕消息炒股获利超过5000——运气也是实力，这是赌徒们的谎言。但你好像不是赌徒"],
+ ["破产重生","从负债状态恢复到10000坤币——那些杀不死你的……"],
+ ["社交恐怖分子","同时有3位好友好感度达到满值——坤城有三百万人。其中三个认为你是他们最重要的人"],
+ ["锦鲤附体","一天内触发3个正面随机事件——坤城今天心情好。但明天就不一定了"],
+ ["死神来了","经历猝死事件后幸存——你看到了什么？有人说是白光，有人说是黑暗。你看到的是一张账单"],
+ ["最后的乘客","完成第500次出租车任务——后座上坐过很多人。坤城记住了你的车灯"],
+ ["技术无罪","程序员任务中拒绝3次灰色请求——在键盘上打什么字是你的自由。不打什么字也是"],
+ ["一言九鼎","从未对NPC撒谎——坤城的商人有一个暗号：穿西装可以说谎，但那个人不用说"],
+ ["守夜人","在坤城活过30天——这座城市见证了你的坚持"],
+];
+const SEASONS=["春","夏","秋","冬"];
+const ACCIDENTS=["送外卖时被电动车蹭了一下","加班到凌晨低血糖犯了","老城区那截楼梯没灯，踩空了","工地上被掉落的木板砸到"];
+const NIGHT_EVENTS=[
+ {d:"夜里有人在你窗下唱歌，跑调跑到了另一条街。你没睡好。",sp:-5},
+ {d:"隔壁搬来了新住户，安静得像不存在。你睡了个好觉。",sp:5},
+ {d:"半夜梦见自己中了一百万，醒来发现枕头湿了——是口水。",sp:3},
+ {d:"楼下烧烤摊的香味飘上来，你饿着肚子睡着了。",hu:-5},
+];
+const SAVE_KEY="ws_v4_html_save_v2";
+
+//================ 状态 ================
+let P;
+function newPlayer(){
+ return {
+  name:"匿名玩家",coins:500,exp:0,level:1,hasStarter:true,
+  hunger:100,health:100,spirit:50,
+  day:1,season:0,skillPts:5,
+  skills:SKILL_NAMES.map(()=>({lv:1})),
+  tasksUnlocked:[true,true,true,false,false,false,false,false,false,false],
+  taskCounts:[0,0,0,0,0,0,0,0,0,0],
+  timeSlots:3,maxSlots:3,
+  todayIncome:0,todayExpenses:0,todayWork:0,todayEvents:0,positiveToday:0,
+  rent:100,living:80,dayEnded:false,
+  totalIncome:0,totalExpense:0,lifeWork:0,totalStockProfit:0,
+  stocks:STOCKS.map(()=>({price:0,hold:0,avg:0})),
+  achs:ACHS.map(()=>false),
+  beenBankrupt:false,neverLied:true,grayRefused:0,deathSurvived:0,suddenDeathChance:0,
+ };
+}
+const ri=n=>Math.floor(Math.random()*n);
+const clamp=(v,a,b)=>v<a?a:(v>b?b:v);
+const $=id=>document.getElementById(id);
+
+//================ 世界氛围（季节 x 时辰） ================
+const PARTICLE_CLS=["petal","firefly","leaf","snow"];
+function applyAtmosphere(){
+ const s=SEASONS[P.season];
+ const ph=P.timeSlots<=0?2:(P.maxSlots-P.timeSlots); // 0上午1下午2晚上
+ const key=["m","a","e"][ph];
+ $("sky").className="grad-"+s+"-"+key;
+ const lum=$("luminary");
+ lum.className=ph===2?"moon":"sun";
+ lum.style.left=(58+ph*12+P.season*3)+"%";
+ lum.style.top=(ph===0?"14%":ph===1?"24%":"10%");
+ $("stars").style.opacity=ph===2?"1":"0";
+ spawnParticles(P.season);
+}
+function spawnParticles(season){
+ const fx=$("fx");fx.innerHTML="";
+ const cls=PARTICLE_CLS[season];
+ const n=season===1?16:22;
+ for(let i=0;i<n;i++){
+  const p=document.createElement("i");
+  p.className="particle "+cls;
+  p.style.left=Math.random()*100+"vw";
+  p.style.animationDuration=(9+Math.random()*14)+"s";
+  p.style.animationDelay=(-Math.random()*20)+"s";
+  p.style.opacity=(.3+Math.random()*.6);
+  fx.appendChild(p);
+ }
+}
+function buildStars(){
+ const box=$("stars");
+ for(let i=0;i<70;i++){
+  const s=document.createElement("i");
+  const sz=Math.random()<.85?1:2;
+  s.style.cssText="left:"+(Math.random()*100)+"vw;top:"+(Math.random()*55)+"vh;width:"+sz+"px;height:"+sz+"px;animation-delay:"+(Math.random()*4)+"s";
+  box.appendChild(s);
+ }
+}
+function buildWindows(){
+ const g=$("windows");
+ let html="";
+ for(let x=8;x<1430;x+=14){
+  for(let y=150;y<250;y+=16){
+   if(Math.random()<.16)html+='<rect x="'+x+'" y="'+y+'" width="4" height="6"/>';
+  }
+ }
+ g.innerHTML=html;
+}
+
+//================ UI 基础 ================
+function log(msg,cls){
+ const l=$("log");
+ const p=document.createElement("p");
+ if(cls)p.className=cls;
+ l.appendChild(p);
+ typewrite(p,stripTags(msg));
+ l.scrollTop=l.scrollHeight;
+}
+function stripTags(s){return s.replace(/<[^>]*>/g,"");}
+function typewrite(el,text){
+ let i=0;el.textContent="";
+ const caret=document.createElement("i");caret.className="caret";el.appendChild(caret);
+ const step=Math.max(1,Math.floor(text.length/28));
+ const t=setInterval(()=>{
+  i+=step;
+  el.textContent=text.slice(0,i);
+  el.appendChild(caret);
+  if(i>=text.length){clearInterval(t);caret.remove();}
+ },24);
+}
+function animNum(el,to){
+ const from=parseInt(el.dataset.v||"0",10);
+ el.dataset.v=to;
+ if(from===to){el.textContent=to.toLocaleString();return;}
+ const t0=performance.now(),dur=600;
+ const tick=t=>{
+  const k=Math.min(1,(t-t0)/dur);
+  const ease=1-Math.pow(1-k,3);
+  el.textContent=Math.round(from+(to-from)*ease).toLocaleString();
+  if(k<1)requestAnimationFrame(tick);
+ };
+ requestAnimationFrame(tick);
+}
+function hurtFx(){
+ $("hurt").classList.add("on");
+ $("app").classList.add("shake");
+ setTimeout(()=>{$("hurt").classList.remove("on");$("app").classList.remove("shake");},420);
+}
+let toastTimer;
+function toast(name,desc){
+ $("t-name").textContent=name;$("t-desc").textContent=desc;
+ $("toast").classList.add("on");
+ clearTimeout(toastTimer);
+ toastTimer=setTimeout(()=>$("toast").classList.remove("on"),4200);
+}
+function modal(title,body,opts){
+ $("m-title").textContent=title;$("m-body").textContent=body;
+ const box=$("m-opts");box.innerHTML="";
+ opts.forEach(o=>{
+  const b=document.createElement("button");b.className="act";b.textContent=o.label;
+  b.onclick=()=>{$("modal").classList.remove("on");o.fn&&o.fn();};
+  box.appendChild(b);
+ });
+ $("modal").classList.add("on");
+}
+document.querySelectorAll("nav button").forEach(b=>b.onclick=()=>{
+ document.querySelectorAll("nav button").forEach(x=>x.classList.remove("on"));
+ document.querySelectorAll(".page").forEach(x=>x.classList.remove("on"));
+ b.classList.add("on");$("p-"+b.dataset.p).classList.add("on");
+});
+
+//================ 渲染 ================
+function render(){
+ animNum($("s-coin"),P.coins);
+ $("s-level").textContent=P.level;
+ $("s-day").textContent=P.day;
+ $("s-exp").textContent="EXP "+P.exp+"/"+(P.level*100);
+ $("s-hp").textContent=P.health;$("b-hp").style.width=P.health+"%";
+ $("s-sp").textContent=P.spirit;$("b-sp").style.width=P.spirit+"%";
+ $("s-hu").textContent=P.hunger;$("b-hu").style.width=P.hunger+"%";
+ $("s-slots").textContent=P.timeSlots+"/"+P.maxSlots;
+ $("s-season").textContent=SEASONS[P.season];
+ $("lvarc").style.strokeDashoffset=157-(157*Math.min(1,P.exp/(P.level*100)));
+ $("s-hp").classList.toggle("lowpulse",P.health<=25);
+ $("s-sp").classList.toggle("lowpulse",P.spirit<=15);
+ const used=P.maxSlots-P.timeSlots;
+ document.querySelectorAll(".ph").forEach((el,i)=>{
+  el.classList.toggle("now",i===used&&P.timeSlots>0);
+  el.classList.toggle("gone",i<used);
+ });
+ applyAtmosphere();
+ renderTasks();renderStocks();renderSkills();renderAchs();
+}
+function renderTasks(){
+ const box=$("task-list");box.innerHTML="";
+ TASKS.forEach((t,i)=>{
+  const lockedBuy=!P.tasksUnlocked[i],lockedLv=P.level<t.lv;
+  const skTxt=Object.entries(t.sk).map(([s,l])=>SKILL_NAMES[s]+l).join(" · ");
+  const needSk=Object.entries(t.sk).some(([s,l])=>P.skills[s].lv<l);
+  const r=document.createElement("div");r.className="row";
+  let btn;
+  if(lockedBuy)btn='<button class="act ghost" data-unlock="'+i+'" '+(P.coins<t.cost?"disabled":"")+'>解锁 '+t.cost+'</button>';
+  else if(lockedLv)btn='<button class="act ghost" disabled>需 Lv'+t.lv+'</button>';
+  else if(needSk)btn='<button class="act ghost" disabled>技能不足</button>';
+  else btn='<button class="act" data-task="'+i+'">出 发</button>';
+  r.innerHTML='<div style="flex:1;min-width:0"><div class="name">'+t.name+
+    ' <span class="c-d num" style="font-size:11px;font-weight:400">Lv'+t.lv+' · '+P.taskCounts[i]+'次</span></div>'+
+   '<div class="desc">'+t.desc+'</div>'+
+   '<div class="tags">基础 <b>'+t.income+'</b> · 成功率 <b>'+Math.round(t.rate*100)+'%</b> · 技能 '+(skTxt||"—")+'</div></div>'+btn;
+  box.appendChild(r);
+ });
+ box.querySelectorAll("[data-task]").forEach(b=>b.onclick=()=>chooseDifficulty(+b.dataset.task));
+ box.querySelectorAll("[data-unlock]").forEach(b=>b.onclick=()=>{
+  const i=+b.dataset.unlock,t=TASKS[i];
+  if(P.coins<t.cost)return;
+  P.coins-=t.cost;P.totalExpense+=t.cost;P.tasksUnlocked[i]=true;
+  log("🔓 解锁新任务：<b>"+t.name+"</b>！","c-g");render();save();
+ });
+}
+function renderStocks(){
+ const box=$("stock-list");box.innerHTML="";
+ box.insertAdjacentHTML("beforeend",'<div class="stockrow c-d" style="font-size:10px;letter-spacing:2px"><div>股票</div><div>现价</div><div>涨跌</div><div class="hideS">波动</div><div>持仓</div><div>操作</div></div>');
+ STOCKS.forEach((s,i)=>{
+  const st=P.stocks[i],chg=st.price-s[1];
+  const cls=chg>0?"up":(chg<0?"down":"c-d");
+  const r=document.createElement("div");r.className="stockrow";
+  r.innerHTML='<div class="nm">'+s[0]+'</div><div class="num">'+st.price+'</div>'+
+   '<div class="num '+cls+'">'+(chg>0?"+":"")+chg+'</div>'+
+   '<div class="hideS c-d num">±'+s[2]+'</div>'+
+   '<div class="num">'+(st.hold||"—")+'</div>'+
+   '<div style="display:flex;gap:4px"><button class="act" data-buy="'+i+'">买10</button><button class="act ghost" data-sell="'+i+'" '+((st.hold||0)<=0?"disabled":"")+'>卖出</button></div>';
+  box.appendChild(r);
+ });
+ box.querySelectorAll("[data-buy]").forEach(b=>b.onclick=()=>trade(+b.dataset.buy,1));
+ box.querySelectorAll("[data-sell]").forEach(b=>b.onclick=()=>trade(+b.dataset.sell,-1));
+}
+function renderSkills(){
+ $("skill-pts").textContent=P.skillPts;
+ const box=$("skill-list");box.innerHTML="";
+ SKILL_NAMES.forEach((n,i)=>{
+  const s=P.skills[i];
+  const r=document.createElement("div");r.className="row";
+  r.innerHTML='<div style="flex:1"><div class="name">'+n+
+    ' <span class="c-d num" style="font-size:12px;font-weight:400">Lv'+s.lv+'/20 · 收入加成 ×'+Math.pow(1.05,s.lv).toFixed(2)+'</span></div>'+
+   '<div class="bar" style="max-width:220px;margin-top:6px"><i style="width:'+(s.lv/20*100)+'%;background:linear-gradient(90deg,#a98cd6,#c9b3ef)"></i></div></div>'+
+   '<button class="act" data-sk="'+i+'" '+((P.skillPts<1||s.lv>=20)?"disabled":"")+'>升 级</button>';
+  box.appendChild(r);
+ });
+ box.querySelectorAll("[data-sk]").forEach(b=>b.onclick=()=>{
+  const i=+b.dataset.sk;
+  if(P.skillPts<1||P.skills[i].lv>=20)return;
+  P.skillPts--;P.skills[i].lv++;
+  log("⚡ "+SKILL_NAMES[i]+" 提升到 Lv"+P.skills[i].lv,"c-b");checkAchs();render();save();
+ });
+}
+function renderAchs(){
+ $("ach-count").textContent=P.achs.filter(x=>x).length+"/"+ACHS.length;
+ const box=$("ach-list");box.innerHTML="";
+ ACHS.forEach((a,i)=>{
+  const r=document.createElement("div");r.className="ach"+(P.achs[i]?" done":"");
+  r.innerHTML='<div><div class="name">'+a[0]+'</div><div class="desc">'+a[1]+'</div></div>'+
+   '<div class="st">'+(P.achs[i]?'<span class="c-y">◈ 已解锁</span>':'<span class="c-d">未解锁</span>')+'</div>';
+  box.appendChild(r);
+ });
+}
+
+//================ 股票交易 ================
+function trade(i,dir){
+ const s=P.stocks[i];
+ if(dir>0){
+  const n=Math.min(10,Math.floor(P.coins/s.price));
+  if(n<=0){log("💰 坤币不够买1股。","c-r");return;}
+  s.avg=(s.avg*(s.hold||0)+s.price*n)/((s.hold||0)+n);
+  P.coins-=n*s.price;s.hold=(s.hold||0)+n;
+  log("📈 买入 "+STOCKS[i][0]+" "+n+"股 @"+s.price+"（花费"+(n*s.price)+"）","c-b");
+ }else{
+  if(!s.hold)return;
+  const gain=s.hold*s.price;
+  const profit=Math.round((s.price-(s.avg||0))*s.hold);
+  P.totalStockProfit=(P.totalStockProfit||0)+profit;
+  P.coins+=gain;
+  log("📉 卖出 "+STOCKS[i][0]+" "+s.hold+"股 @"+s.price+"（回款"+gain+"，"+(profit>=0?"盈利":"亏损")+" "+Math.abs(profit)+"）",profit>=0?"c-g":"c-r");
+  s.hold=0;s.avg=0;
+ }
+ checkAchs();render();save();
+}
+
+//================ 核心循环 ================
+function chooseDifficulty(ti){
+ const t=TASKS[ti];
+ modal("打工模式 — "+t.name,
+  "今日剩余时间槽："+P.timeSlots+"/"+P.maxSlots+"\n选择今天的活法：",
+  DIFFS.map((d,i)=>({label:d.name+" — "+d.desc,fn:()=>doTask(ti,i)}))
+  .concat([{label:"返回"}]));
+}
+function doTask(ti,di){
+ const t=TASKS[ti],d=DIFFS[di];
+ // 防御：若是未开始的新一天，先重置（对应C++ do_task开头的 day_ended 重置块）
+ if(P.dayEnded){P.dayEnded=false;P.timeSlots=P.maxSlots;
+  P.todayIncome=0;P.todayExpenses=0;P.todayWork=0;P.todayEvents=0;P.positiveToday=0;}
+ if(P.timeSlots<=0){log("⏰ 今天的时间已经用完了！","c-r");return;}
+ if(P.timeSlots<d.slot){log("⏰ 时间不够！"+d.name+"模式需要 "+d.slot+" 个时间槽，当前剩余 "+P.timeSlots+"。","c-r");return;}
+ let sc=t.rate*Math.pow(1.05,P.skills[3].lv-1);
+ if(di===3)sc*=.85;if(di===0)sc=1;sc=Math.min(sc,.95);
+ const success=ri(100)<sc*100;
+ let mult=d.mult;
+ Object.entries(t.sk).forEach(([s])=>{mult*=Math.pow(1.05,P.skills[s].lv);});
+ mult*=[1.1,1.05,1.15,.9][P.season];
+ if(P.hasStarter)mult*=1.05;
+ let income=Math.floor(t.income*mult);
+ let eg=t.exp;if(di===3)eg=Math.floor(eg*1.8);if(di===2)eg=Math.floor(eg*1.2);
+ if(!success){income=Math.floor(income/2);}
+ P.timeSlots-=d.slot;
+ const hpBefore=P.health;
+ P.health=clamp(P.health-d.hp,0,100);
+ if(P.health<hpBefore)hurtFx();
+ if(di===3&&ri(100)<d.risk){
+  P.suddenDeathChance+=5;P.health-=30;hurtFx();
+  log("🚨 你的身体发出了严重的警告信号！眼前一黑…","c-r");
+  if(P.health<=0){P.health=1;P.deathSurvived++;log("💀 你差点猝死在坤城的街头！幸运地捡回一条命…","c-r");}
+ }
+ P.coins+=income;P.totalIncome+=income;P.todayIncome+=income;
+ P.exp+=eg;P.lifeWork++;P.todayWork++;P.taskCounts[ti]++;
+ let hu=5+d.slot*2;if(di===3)hu+=5;P.hunger=clamp(P.hunger-hu,0,100);
+ P.spirit=di===0?50+ri(11):(di===3?20+ri(21):40+ri(21));
+ log("✅ <b>"+t.name+"</b>［"+d.name+"模式］收入 <b>+"+income+"</b> 坤币 · 经验+"+eg+" · 成功率"+Math.round(sc*100)+"%"+(success?"":" · 出了意外，只拿到一半"),"c-g");
+ let need=P.level*100;
+ while(P.exp>=need){P.exp-=need;P.level++;P.skillPts+=3;
+  log("🌟 等级提升！当前等级 <b>"+P.level+"</b> · +3 技能点","c-y");need=P.level*100;}
+ microEvent(ti);
+ randomAccident();
+ checkAchs();
+ if(P.timeSlots<=0){log("🌆 坤城的天空暗了下来，一天又过去了…","c-y");dayEnd();}
+ else{render();save();}
+}
+function microEvent(ti){
+ if(ri(100)>=40)return;
+ const pool=MICRO_EVENTS.filter(e=>e.id===-1||e.id===ti);
+ const e=pool[ri(pool.length)];
+ if(e.choice==="gray"){
+  modal("微事件 — "+e.t,e.d+"\n\n1. 接受请求（报酬3000坤币，但事后良心不安）\n2. 拒绝（程序员有底线）",[
+   {label:"1. 接受请求",fn:()=>{P.coins+=3000;P.totalIncome+=3000;P.todayIncome+=3000;P.neverLied=false;P.spirit=clamp(P.spirit-20,0,100);
+    log("   你接下了这个活。钱到了，但心里总觉得哪里不舒服。","c-r");finishMicro();}},
+   {label:"2. 拒绝",fn:()=>{P.grayRefused++;P.spirit=clamp(P.spirit+10,0,100);
+    log("   你拒绝了。有些钱，不该赚。","c-g");finishMicro();}}]);
+  return;
+ }
+ if(e.choice==="scammer"){
+  modal("微事件 — "+e.t,e.d+"\n\n1. 敷衍过去（\"我考虑考虑\"）\n2. 直接拒绝",[
+   {label:"1. 敷衍过去",fn:()=>{P.neverLied=false;P.spirit=clamp(P.spirit-5,0,100);
+    log("   你敷衍了几句，对方悻悻地走了。","c-y");finishMicro();}},
+   {label:"2. 直接拒绝",fn:()=>{P.spirit=clamp(P.spirit+5,0,100);
+    log("   你直截了当地拒绝了。在坤城，少一个麻烦是一个麻烦。","c-g");finishMicro();}}]);
+  return;
+ }
+ if(e.choice==="envelope"){
+  modal("微事件 — "+e.t,e.d+"\n\n1. 交给警察\n2. 收下现金，不管那字条",[
+   {label:"1. 交给警察",fn:()=>{P.spirit=clamp(P.spirit+10,0,100);
+    log("   你把信封交给了最近的派出所。做了该做的事，今晚睡得安稳。","c-g");finishMicro();}},
+   {label:"2. 收下现金",fn:()=>{P.coins+=500;P.totalIncome+=500;P.todayIncome+=500;P.neverLied=false;P.spirit=clamp(P.spirit-15,0,100);
+    log("   你收下了钱，把字条扔进了垃圾桶。那晚你失眠了。","c-r");finishMicro();}}]);
+  return;
+ }
+ P.spirit=clamp(P.spirit+e.sp,0,100);
+ const hpBefore=P.health;
+ P.health=clamp(P.health+e.hp,0,100);
+ if(e.hp<0&&P.health<hpBefore)hurtFx();
+ let extra="";
+ if(e.c>0){P.coins+=e.c;P.totalIncome+=e.c;P.todayIncome+=e.c;extra="（+"+e.c+" 坤币）";}
+ else if(e.c<0){const loss=-e.c;
+  if(P.coins>=loss){P.coins-=loss;P.totalExpense+=loss;P.todayExpenses+=loss;extra="（-"+loss+" 坤币）";}
+  else extra="（余额不足，无法扣除）";}
+ if(e.sp)extra+="［精神"+(e.sp>0?"+":"")+e.sp+"］";
+ if(e.hp)extra+="［血量"+(e.hp>0?"+":"")+e.hp+"］";
+ log("🎲 微事件 — <b>"+e.t+"</b>："+e.d+" "+extra,"c-y");
+ finishMicro();
+}
+function finishMicro(){P.todayEvents++;P.positiveToday++;checkAchs();render();save();}
+function randomAccident(){
+ if(ri(100)<10&&P.health>0){
+  const dmg=5+ri(10);
+  P.health=clamp(P.health-dmg,0,100);
+  hurtFx();
+  log("🚑 坤城的意外："+ACCIDENTS[ri(4)]+" —— 血量 -"+dmg+"！","c-r");
+  if(P.health<=0){
+   const fee=Math.floor(Math.abs(P.coins)*0.1);
+   P.coins-=fee;P.health=1;
+   log("💀 你在坤城的街头倒下了……被人及时送进医院，花了 "+fee+" 坤币医药费。","c-r");
+  }
+ }else if(P.health<100&&P.health>0){
+  P.health=clamp(P.health+1+ri(3),0,100);
+ }
+}
+function dayEnd(){
+ if(P.dayEnded)return;
+ P.dayEnded=true;P.day++;
+ const cost=P.rent+P.living;
+ P.todayExpenses+=cost;P.totalExpense+=cost;
+ if(P.coins>=cost)P.coins-=cost;
+ else{P.coins-=cost;P.beenBankrupt=true;}
+ const spr=15+ri(11),hpr=15+ri(16);
+ P.spirit=Math.min(P.spirit+spr,70);P.health=Math.min(P.health+hpr,100);
+ if(P.health<=0)P.health=10;
+ if(ri(100)<30){const ne=NIGHT_EVENTS[ri(NIGHT_EVENTS.length)];
+  if(ne.sp)P.spirit=clamp(P.spirit+ne.sp,0,100);if(ne.hu)P.hunger=clamp(P.hunger+ne.hu,0,100);
+  log("🌙 夜里……"+ne.d,"c-d");}
+ if(P.day%30===0){P.season=(P.season+1)%4;log("🍂 坤城的季节变了！现在是【"+SEASONS[P.season]+"】","c-v");}
+ P.rent=100+P.level*10;P.living=80+P.level*5;
+ const net=P.todayIncome-cost;
+ log("─────── 📰 坤城日报 · 第 "+P.day+" 天 ───────","c-c");
+ log("净收入 "+(net>=0?"+":"")+net+" 坤币（打工"+P.todayIncome+" − 房租"+P.rent+" − 餐饮"+P.living+"）· 打工"+P.todayWork+"次 · 事件"+P.todayEvents+"次 · 恢复 精神+"+spr+"/血量+"+hpr,net>=0?"c-g":"c-r");
+ if(P.coins<0)log("💸 你已经负债了！坤城的催债人很快就会找上门…","c-r");
+ updateStockPrices();
+ P.timeSlots=P.maxSlots;P.todayIncome=0;P.todayExpenses=0;P.todayWork=0;P.todayEvents=0;P.positiveToday=0;
+ log("☀️ 新的一天开始了。坤城，早安。","c-c");
+ checkAchs();save();render();
+ P.dayEnded=false;
+}
+function updateStockPrices(){
+ STOCKS.forEach((s,i)=>{
+  const chg=ri(s[2]*2+1)-s[2];
+  P.stocks[i].price=Math.max(10,P.stocks[i].price+chg);
+ });
+}
+
+//================ 成就 ================
+function unlockAch(i){
+ if(P.achs[i])return;
+ P.achs[i]=true;
+ log("🏆 成就解锁【<b>"+ACHS[i][0]+"</b>】—— "+ACHS[i][1],"c-y");
+ toast(ACHS[i][0],ACHS[i][1]);
+}
+function checkAchs(){
+ if(P.totalIncome>=100)unlockAch(0);
+ if((P.totalStockProfit||0)>=1000)unlockAch(3);
+ if(P.lifeWork>=50)unlockAch(2);
+ if(P.coins>=1000000)unlockAch(5);
+ if(P.level>=50)unlockAch(6);
+ if(P.skills.some(s=>s.lv>=10))unlockAch(7);
+ if(P.lifeWork>=1000)unlockAch(8);
+ if(P.skills.every(s=>s.lv>=5))unlockAch(12);
+ if(P.achs.filter(x=>x).length>=20)unlockAch(14);
+ if(P.beenBankrupt&&P.coins>=10000)unlockAch(22);
+ if(P.positiveToday>=3)unlockAch(24);
+ if(P.deathSurvived>=1)unlockAch(25);
+ if(P.taskCounts[0]>=500)unlockAch(26);
+ if(P.grayRefused>=3)unlockAch(27);
+ if(P.neverLied&&P.day>=10)unlockAch(28);
+ if(P.day>=30)unlockAch(29);
+}
+
+//================ 存档 ================
+function save(){try{localStorage.setItem(SAVE_KEY,JSON.stringify(P));}catch(e){}}
+function load(){
+ const s=localStorage.getItem(SAVE_KEY);
+ if(!s)return false;
+ P=JSON.parse(s);return true;
+}
+
+//================ 绑定 ================
+$("btn-sleep").onclick=()=>modal("入夜","提前结束今天？\n将结算日报并扣除生活成本。",[
+ {label:"睡下",fn:()=>dayEnd()},{label:"再撑一会儿"}]);
+$("btn-eat").onclick=()=>{
+ if(P.coins<30){log("💰 买不起盒饭了…","c-r");return;}
+ P.coins-=30;P.totalExpense+=30;P.todayExpenses+=30;
+ P.hunger=clamp(P.hunger+30,0,100);
+ log("🍱 吃了一份盒饭，饱食度 +30。","c-g");render();save();
+};
+$("btn-save").onclick=()=>{save();log("💾 已保存。","c-c");};
+$("btn-load").onclick=()=>{if(load()){log("📂 已读取存档。","c-c");render();}else log("没有找到存档。","c-d");};
+$("btn-reset").onclick=()=>modal("重新开始","⚠️ 将删除存档并回到第一天，确定？",[
+ {label:"确定",fn:()=>{localStorage.removeItem(SAVE_KEY);P=newPlayer();$("log").innerHTML="";enterGame(true);}},
+ {label:"取消"}]);
+$("btn-new").onclick=()=>{localStorage.removeItem(SAVE_KEY);P=newPlayer();enterGame(true);};
+$("btn-continue").onclick=()=>{
+ if(!load()){toast("提示","没有找到存档，开始新的旅程吧");P=newPlayer();enterGame(true);return;}
+ enterGame(false);
+};
+
+//================ 启动 ================
+function enterGame(fresh){
+ $("title-screen").classList.add("off");
+ $("app").classList.remove("dim");
+ $("log").innerHTML="";
+ log(fresh?"🏙️ 欢迎来到坤城。这座城市有300万人口，而你是其中之一。":"📂 欢迎回来。坤城没有变，变的是你。","c-v");
+ log("提示：每天3个时间槽，打工选择难度，槽耗尽自动结算入夜。","c-d");
+ if(P.coins<0)log("💸 当前处于负债状态……先想办法翻身吧。","c-r");
+ render();
+}
+buildStars();buildWindows();
+// 标题画面背后先放个默认氛围
+P=newPlayer();applyAtmosphere();P=null;
+if(!localStorage.getItem(SAVE_KEY)){$("btn-continue").style.opacity=".35";}
+</script>
+</body>
+</html>

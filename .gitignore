@@ -2,3 +2,9 @@
 /.workbuddy
 __pycache__/
 修改器/__pycache__/
+
+# 运行时存档 / 本地备份，不进仓库
+/save/
+/备份/
+* - 副本.exe
+/打工模拟器 - 副本.exe

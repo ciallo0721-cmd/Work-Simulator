@@ -1,5 +1,5 @@
 ﻿/*
- * 打工模拟器 v5.0 - 坤城篇 · TUI 版
+ * 打工模拟器 v5.1 - 坤城篇 · TUI 版（股票真实化）
  * 世界：坤城 —— 一座虚构的当代中国沿海城市，300万人口的欲望都市
  * 叙事主题："在一个人人都想往上爬的城市里，你要成为什么样的人？"
  * 编译环境: Windows / Linux，C++（gcc 或 g++ 均可）
@@ -67,6 +67,19 @@
  #define CHAT_HISTORY_FILE "chat_history.txt"
 #define STOCK_HISTORY_FILE "save/stock_history.dat"
 #define STOCK_HISTORY_POINTS 30  // 每支股票保留30个历史价格
+
+/* ===== v5.1 真实化市场参数 ===== */
+#define STOCK_COUNT          25
+#define STOCK_SECTOR_COUNT   9
+#define STOCK_TICKS_PER_DAY  120   /* 每 120 个 tick = 1 个交易日（约 2 分钟） */
+#define STOCK_LIMIT_PCT      10    /* 主板涨跌停 ±10% */
+#define STOCK_ST_LIMIT_PCT   5     /* ST 股涨跌停 ±5% */
+#define STOCK_ST_LINE        65    /* 跌破基准价 65% 触发 ST */
+#define STOCK_DELIST_LINE    25    /* 跌破基准价 25% 触发退市程序 */
+#define STOCK_ST_DAYS        3     /* ST 满 3 个交易日 -> 停牌退市 */
+#define STOCK_MAINT_RATIO    130   /* 维持担保比例 130%（融资盘强平线） */
+#define MAX_NEWS             60    /* 新闻环形缓冲容量 */
+#define STOCK_SAVE_FILE      "save/stocks.dat"
  
  // ANSI颜色代码
  #define COLOR_RED "\033[31m"
@@ -256,14 +269,53 @@ typedef enum {
      int quantity;
  } InventoryItem;
  
- typedef struct {
-     char name[50];
-     int base_price;
-     int current_price;
-     int price_change;
-     int volatility;
-     time_t last_update;
- } Stock;
+/* ---- v5.1 股票真实化：市场状态 ---- */
+enum {
+    STK_NORMAL   = 0,   /* 正常交易 */
+    STK_RISK     = 1,   /* ST 风险警示（退市风险，涨跌幅收窄到 ±5%） */
+    STK_HALT     = 2,   /* 停牌（退市整理期前的一日） */
+    STK_DELISTED = 3    /* 已退市，永久不可交易 */
+};
+
+typedef struct {
+    char name[50];
+    int base_price;
+    int current_price;
+    int price_change;
+    int volatility;
+    time_t last_update;
+
+    /* ---- v5.1 新增：真实化字段 ---- */
+    int  sector;        /* 行业索引 */
+    int  status;        /* STK_* */
+    int  open_price;    /* 本交易日开盘 */
+    int  prev_close;    /* 昨收 */
+    int  day_high;      /* 本交易日最高 */
+    int  day_low;       /* 本交易日最低 */
+    int  limit_lock;    /* +1 涨停封死 / -1 跌停封死 / 0 正常 */
+    int  drift;         /* 趋势漂移（每 tick 变动股数，含正负） */
+    int  drift_ticks;   /* 趋势剩余 tick */
+    int  bad_days;      /* 连续低迷交易日数（判 ST / 退市） */
+    int  st_days;       /* 已挂 ST 的交易日数 */
+    int  halt_days;     /* 停牌剩余交易日 */
+    int  reipo_days;    /* 退市后经过的交易日（满 40 天重新上市） */
+} Stock;
+
+/* ---- v5.1 新闻 ---- */
+#define NEWS_TYPE_ENT   0   /* 娱乐 */
+#define NEWS_TYPE_ECO   1   /* 经济 */
+#define NEWS_TYPE_POL   2   /* 政治 */
+
+typedef struct {
+    int  type;          /* NEWS_TYPE_* */
+    int  stock;         /* 关联股票，-1 = 不限 */
+    int  sector;        /* 关联行业，-1 = 不限 */
+    int  impact;        /* 对股价的总影响百分比（负=利空） */
+    int  tick_left;     /* 剩余影响 tick */
+    int  day;           /* 发布时的交易日 */
+    char head[120];
+    char body[300];
+} NewsItem;
  
  typedef struct {
      char name[30];
@@ -346,8 +398,18 @@ typedef enum {
      int current_company_level;
      InventoryItem inventory[MAX_INVENTORY];
      int inventory_count;
-    Stock stocks[25];
-    int invested_stocks[25];
+   Stock stocks[25];
+   int invested_stocks[25];
+
+   /* ---- v5.1 股票真实化：融资盘 & 市场时钟 ---- */
+   money_t stock_margin_debt[25];  /* 每支股票尚未偿还的融资金额 */
+   money_t stock_loan_total;       /* 融资负债总额 */
+   int  stock_tick;                /* 当前交易日已走过的 tick */
+   int  stock_day;                 /* 股票交易日序号 */
+   int  stock_force_closed;        /* 被强制平仓次数 */
+   int  stock_margin_bought;       /* 融资买入次数 */
+   int  stock_delist_count;        /* 已退市股票数 */
+   int  stock_news_unread;         /* 未读新闻数 */
      Property properties[10];
      int property_count;
      Friend friends[MAX_FRIENDS];
@@ -422,6 +484,20 @@ typedef enum {
  MarketItem market[MAX_MARKET];
  Property available_properties[10];
  Friend potential_friends[MAX_FRIENDS];
+
+ //================ v5.1 新闻系统全局 ================
+ static NewsItem g_news[MAX_NEWS];
+ static int  g_news_n = 0;        /* 已生成条数（环形，最多 MAX_NEWS） */
+ static int  g_news_head = 0;     /* 环形头 */
+ static int  g_news_seq = 0;      /* 自增序号，用于“第几条” */
+
+ /* 行业名 */
+ static const char* STOCK_SECTOR_NAME[STOCK_SECTOR_COUNT] = {
+     "科技", "金融", "地产", "消费", "医药", "能源环保", "制造", "传媒", "农业"
+ };
+
+ /* 大盘景气度（-10 ~ +10），每天结算时随机漂移，影响所有股票 drift */
+ static int g_market_mood = 0;
  
  //================ 函数声明 ================
  void enable_ansi();
@@ -442,6 +518,8 @@ typedef enum {
  bool remove_coins(money_t amount);
  
  // 游戏系统
+ static void news_generate_one(void);   /* 前向声明：init_game 播种首页新闻用 */
+
  void init_game();
  void init_player();
  void init_tasks();
@@ -655,12 +733,17 @@ static const char* tui_season_str(void)
     return n[s];
 }
 
-/* 坤城指数：25 支股票均价的十倍 */
+/* 坤城指数：剔除退市股后，按仍在交易的股票均价十倍 */
 static int tui_stock_index(void)
 {
-    int i, sum = 0;
-    for (i = 0; i < 25; i++) sum += player.stocks[i].current_price;
-    return sum * 10 / 25;
+    int i, sum = 0, n = 0;
+    for (i = 0; i < 25; i++) {
+        if (player.stocks[i].status == STK_DELISTED) continue;
+        sum += player.stocks[i].current_price;
+        n++;
+    }
+    if (n == 0) return 0;
+    return sum * 10 / (n * 100);
 }
 
 static void tui_trend_push(void)
@@ -734,21 +817,13 @@ static void tui_trend_save(void)
     fclose(f);
 }
 
-/* 实时行情跳动：温和随机游走 + 均值回归 */
+/* v5.1：全市场推进（无均值回归，靠 stk_market_tick 里的真实引擎） */
+static void stk_market_tick(void);          /* forward */
+static void stk_day_close(void);            /* forward */
+
 static void tui_stock_live_tick(void)
 {
-    int i;
-    for (i = 0; i < 25; i++) {
-        Stock* s = &player.stocks[i];
-        int d = (rand() % 3) - 1;
-        if (s->volatility >= 12 && (rand() % 3) == 0) d *= 2;
-        if (s->current_price > s->base_price * 3 / 2) d -= 1;
-        if (s->current_price < s->base_price * 2 / 3) d += 1;
-        s->current_price += d;
-        if (s->current_price < 10) s->current_price = 10;
-        if (s->current_price > 99999) s->current_price = 99999;
-        s->price_change = d;
-    }
+    stk_market_tick();
     tui_trend_push();
 }
 
@@ -762,7 +837,7 @@ static void tui_draw_topbar(void)
     tc_fill(0, 0, w, 1, " ", TC_DIM, TC_BG3);
     tc_puts(2, 0, "坤城", TC_YELLOW, TC_BG3);
     tc_puts(6, 0, "打工模拟器", TC_WHITE, TC_BG3);
-    tc_puts(17, 0, "v5.0", TC_FAINT, TC_BG3);
+    tc_puts(17, 0, "v5.1", TC_FAINT, TC_BG3);
 
     snprintf(right, sizeof right, "第 %d 天 · %s季 · 声望 %d ",
              player.day_count, tui_season_str(), player.prestige_level);
@@ -877,9 +952,13 @@ static void tui_draw_sidebar(int y, int h)
         tc_puts(cx + 9, cy, buf, TC_YELLOW, TC_BG2);
         cy++;
         for (i = 0; i < g_trend_n; i++) {
-            int k, s = 0;
-            for (k = 0; k < 25; k++) s += g_trend[k][i];
-            idx[i] = s * 10 / 25;
+            int k, s = 0, n = 0;
+            for (k = 0; k < 25; k++) {
+                if (player.stocks[k].status == STK_DELISTED) continue;
+                s += g_trend[k][i];
+                n++;
+            }
+            idx[i] = n > 0 ? s * 10 / (n * 100) : 0;
         }
         tc_spark(cx, cy, SB_W - 5, idx, g_trend_n, idx[0], TC_RED, TC_GREEN, TC_BG2);
         cy++;
@@ -1034,7 +1113,7 @@ static void tui_sync_title(void)
          tui_begin();
          tc_puts_center(0, cy, w, "坤  城", TC_YELLOW, TC_BG);
          tc_puts_center(0, cy + 1, w, "打 工 模 拟 器", TC_WHITE, TC_BG);
-         tc_puts_center(0, cy + 2, w, "v5.0  ·  TUI EDITION", TC_CYAN, TC_BG);
+         tc_puts_center(0, cy + 2, w, "v5.1  ·  TUI EDITION", TC_CYAN, TC_BG);
          tc_bar(cx, cy + 4, barw, i, steps, TC_CYAN, TC_CYAN, TC_CYAN, TC_BG);
          if (i >= steps) {
              tc_puts_center(0, cy + 6, w, "先找份活干，活过这个月。", TC_DIM, TC_BG);
@@ -1118,6 +1197,12 @@ static void tui_sync_title(void)
      // 尝试加载存档
      load_game();
 
+     // 首页速报不该是空的：没有历史新闻就播种一批
+     if (g_news_n < 3) {
+         int q;
+         for (q = g_news_n; q < 12; q++) news_generate_one();
+     }
+
      // v4.0 fix: 同步存档恢复后的任务解锁状态
      for (int i = 0; i < MAX_TASKS; i++) {
          tasks[i].is_unlocked = player.tasks_unlocked[i];
@@ -1147,7 +1232,7 @@ static void tui_sync_title(void)
              tui_begin();
              W = tui_cv.w; H = tui_cv.h;
              tc_puts_center(0, 2, W, "坤  城", TC_YELLOW, TC_BG);
-             tc_puts_center(0, 3, W, "打 工 模 拟 器   v5.0", TC_WHITE, TC_BG);
+             tc_puts_center(0, 3, W, "打 工 模 拟 器   v5.1", TC_WHITE, TC_BG);
              tc_puts_center(0, 5, W, "「坤城不问你的过去，只问你的价格。」", TC_CYAN, TC_BG);
              for (k2 = 0; k2 < 6; k2++)
                  tc_puts_center(0, 8 + k2, W, intro[k2], TC_DIM, TC_BG);
@@ -1762,19 +1847,778 @@ void init_stocks() {
     int volatilities[] = {10, 15, 8, 12, 20, 9, 11, 14, 16, 7,
                           13, 18, 6, 17, 19, 5, 10, 22, 25, 14,
                           8, 16, 12, 21, 9};
-    
+    /* 行业：0科技 1金融 2地产 3消费 4医药 5能源 6制造 7传媒 8农业 */
+    int sectors[] = {0, 3, 2, 5, 7, 1, 4, 0, 6, 5,
+                     5, 3, 6, 3, 3, 0, 3, 0, 8, 8,
+                     2, 0, 7, 7, 5};
+
     for (int i = 0; i < 25; i++) {
+         int bp = base_prices[i] * 100;   /* v5.1：内部单位为“分” */
          safe_strcpy(player.stocks[i].name, stock_names[i], 50);
-         player.stocks[i].base_price = base_prices[i];
-         player.stocks[i].current_price = base_prices[i];
+         player.stocks[i].base_price = bp;
+         player.stocks[i].current_price = bp;
          player.stocks[i].price_change = 0;
          player.stocks[i].volatility = volatilities[i];
          player.stocks[i].last_update = time(NULL);
          player.invested_stocks[i] = 0;
+
+         /* v5.1 */
+         player.stocks[i].sector       = sectors[i];
+         player.stocks[i].status       = STK_NORMAL;
+         player.stocks[i].open_price   = bp;
+         player.stocks[i].prev_close   = bp;
+         player.stocks[i].day_high     = bp;
+         player.stocks[i].day_low      = bp;
+         player.stocks[i].limit_lock   = 0;
+         player.stocks[i].drift        = 0;
+         player.stocks[i].drift_ticks  = 0;
+         player.stocks[i].bad_days     = 0;
+         player.stocks[i].st_days      = 0;
+         player.stocks[i].halt_days    = 0;
+         player.stocks[i].reipo_days   = 0;
+
+         player.stock_margin_debt[i] = 0;
      }
+     player.stock_loan_total   = 0;
+     player.stock_tick         = 0;
+     player.stock_day          = 1;
+     player.stock_force_closed = 0;
+     player.stock_margin_bought = 0;
+     player.stock_delist_count = 0;
+     player.stock_news_unread  = 0;
+     g_market_mood = 0;
  }
  
- void init_properties() {
+/*================ v5.1 坤城新闻系统 ================*/
+#define ARRN(a) ((int)(sizeof(a) / sizeof((a)[0])))
+
+static int stk_rnd(int lo, int hi)
+{
+    if (hi <= lo) return lo;
+    return lo + (int)(rand() % (hi - lo + 1));
+}
+static const char* stk_pick(const char* const* arr, int n)
+{
+    if (n <= 0) return "";
+    return arr[rand() % n];
+}
+
+static const char* NEWS_TYPE_NAME[3] = { "娱乐", "经济", "政治" };
+
+/* —— 人名库 —— */
+static const char* SURNAME[] = {
+    "林","苏","沈","陆","顾","白","程","唐","江","季","宋","许","温","楚",
+    "谢","阮","韩","秦","叶","周","赵","钱","孙","李","吴","郑","冯","陈",
+    "闻人","欧阳","司徒","南宫"
+};
+static const char* GIVEN[] = {
+    "夕照","千叶","墨白","星野","南乔","一澜","一鸣","可可","江野","青禾",
+    "知雪","子昂","知夏","若初","辞书","云归","小满","雪见","朗月","蓁蓁",
+    "知远","沐白","江南","清和","彤彤","见山","临川","琥珀","未眠","与时"
+};
+
+static void stk_rand_name(char* out, size_t cap)
+{
+    const char* s = stk_pick(SURNAME, ARRN(SURNAME));
+    const char* g = stk_pick(GIVEN, ARRN(GIVEN));
+    snprintf(out, cap, "%s%s", s, g);
+}
+
+/* —— 娱乐 — 人设 —— */
+static const char* ENT_JOB[] = { "演员","歌手","声优","音乐人","导演","偶像","编剧","主持人" };
+static const char* ENT_PLACE[] = {
+    "老城区的一家火锅店","开发区的片场","CBD 的一家酒店","大学城的演唱会后台",
+    "富人区的独栋别墅","机场贵宾厅","坤城电影节红毯","深夜的烧烤摊","老城区的地下停车场"
+};
+typedef struct { const char* what; const char* why; } EntBad;
+static const EntBad ENT_BAD[] = {
+    { "被拍到与已婚制片人同乘一车", "两人已经在一起两年" },
+    { "被爆出学历造假",           "学历证书是从中介手里买的" },
+    { "因酒驾被交警带走",         "血液酒精含量超标三倍" },
+    { "被前助理爆料长期拖欠工资", "助理已经三个月没拿到工资" },
+    { "在片场当场罢演",           "原因是剧组连续通宵赶进度" },
+    { "被曝偷税漏税",             "涉案金额高达八位数" },
+    { "被拍到当街与人互殴",       "起因只是抢一个停车位" },
+    { "直播时口出狂言引发众怒",   "粉丝当场脱粉回踩" },
+    { "被曝签阴阳合同",           "合同金额与申报收入差了十倍" }
+};
+static const char* ENT_GOOD[] = {
+    "发布个人新作","作品票房破十亿","开启全国巡演","拿下电影节最佳主角奖",
+    "新作收视破纪录","签约头部公司","作品登顶年度榜单","新作入围国际影展"
+};
+static const char* ENT_DEAD[] = {
+    "因突发心梗去世","在高速上遭遇车祸身亡","因病在坤城人民医院去世","在家中离世"
+};
+static const char* ENT_REL[] = { "妻子","丈夫","家人","儿女","经纪人","前助理","合作方" };
+
+/* —— 经济 —— */
+static const char* ECO_BAD[] = {
+    "进入破产清算程序","被证监会立案调查","被曝财务造假","实控人被带走调查",
+    "被交易所出具退市风险警示","年报净利润暴跌九成","主营业务全面停摆","被债权人申请重整"
+};
+static const char* ECO_GOOD[] = {
+    "获得国资战略注资","完成对同行的收购","发布新旗舰产品","营收创历史新高",
+    "中标坤城市政府大单","宣布回购股份","拿下行业最高资质认证"
+};
+typedef struct { const char* txt; int sector; } MacroPolicy;
+static const MacroPolicy ECO_POLICY[] = {
+    { "央行宣布降息 25 个基点",      1 },   /* 金融 */
+    { "证监会收紧 IPO 审核",         1 },
+    { "坤城出台楼市限购新政",        2 },   /* 地产 */
+    { "二手房交易增值税免征年限上调", 2 },
+    { "出口退税政策调整",            6 },   /* 制造 */
+    { "新一轮反垄断调查启动",        0 },   /* 科技 */
+    { "医药集采范围再扩大",          4 },   /* 医药 */
+    { "新能源补贴退坡",              5 },   /* 能源环保 */
+    { "农产品收储价格上调",          8 }    /* 农业 */
+};
+
+/* —— 政治 —— */
+static const char* POL_POST[] = { "坤城市长","坤国总统","坤城市副市长","坤城议会主席" };
+static const char* POL_EVENT[] = {
+    "当选","宣誓就任","正式接任","补选胜出后出任"
+};
+
+/* 按 UTF-8 字符数截断，超出补省略号 */
+static void news_clip(const char* src, char* out, size_t cap, int max_chars)
+{
+    int cnt = 0;
+    size_t i = 0, j = 0;
+    if (!src) { out[0] = 0; return; }
+    while (src[i] && cnt < max_chars) {
+        unsigned char c = (unsigned char)src[i];
+        int len = (c < 0x80) ? 1 : ((c >> 5) == 0x6 ? 2 : ((c >> 4) == 0xE ? 3 : 4));
+        if (j + (size_t)len + 4 >= cap) break;
+        memcpy(out + j, src + i, (size_t)len);
+        i += (size_t)len; j += (size_t)len;
+        cnt++;
+    }
+    if (src[i]) { out[j++] = (char)0xE2; out[j++] = (char)0x80; out[j++] = (char)0xA6; }
+    out[j] = 0;
+}
+
+/* 价格显示：内部以“分”为单位，输出 xx.yy 元 */
+static void stk_price_str(char* out, size_t cap, int cents)
+{
+    if (cents < 0) snprintf(out, cap, "-%d.%02d", (-cents) / 100, (-cents) % 100);
+    else           snprintf(out, cap, "%d.%02d", cents / 100, cents % 100);
+}
+
+/* 施加新闻对股价的影响 */
+static void stk_apply_shock(int idx, int impact, int ttl)
+{
+    Stock* s = &player.stocks[idx];
+    int total, per;
+    if (s->status == STK_DELISTED) return;
+    total = s->current_price * impact / 100;
+    per = total / (ttl > 0 ? ttl : 1);
+    if (per == 0 && impact != 0) per = (impact > 0 ? 1 : -1);
+    s->drift += per;
+    if (s->drift_ticks < ttl) s->drift_ticks = ttl;
+}
+
+static int news_push(int type, int stock, int sector, int impact, int ttl,
+                     const char* head, const char* body)
+{
+    NewsItem* it;
+    int idx, i, k;
+
+    /* 最近 8 条里已有同样标题就不重复推（同一事件不刷屏） */
+    for (k = 0; k < 8 && k < g_news_n; k++) {
+        int pi = (g_news_n < MAX_NEWS) ? (g_news_n - 1 - k)
+                : ((g_news_head - 1 - k + MAX_NEWS * 2) % MAX_NEWS);
+        if (strcmp(g_news[pi].head, head) == 0) return 0;
+    }
+
+    if (g_news_n < MAX_NEWS) {
+        idx = g_news_n++;
+    } else {
+        idx = g_news_head;
+        g_news_head = (g_news_head + 1) % MAX_NEWS;
+    }
+    it = &g_news[idx];
+    it->type = type;
+    it->stock = stock;
+    it->sector = sector;
+    it->impact = impact;
+    it->tick_left = ttl;
+    it->day = player.stock_day;
+    safe_strcpy(it->head, head, sizeof it->head);
+    safe_strcpy(it->body, body, sizeof it->body);
+
+    if (player.stock_news_unread < 99) player.stock_news_unread++;
+
+    if (stock >= 0) {
+        stk_apply_shock(stock, impact, ttl);
+    } else if (sector >= 0) {
+        for (i = 0; i < STOCK_COUNT; i++)
+            if (player.stocks[i].sector == sector) stk_apply_shock(i, impact, ttl);
+    } else {
+        for (i = 0; i < STOCK_COUNT; i++) stk_apply_shock(i, impact * 2 / 3, ttl);
+    }
+    (void)g_news_seq;
+    return 1;
+}
+
+/* 取第 k 新的新闻（k=0 最新） */
+static NewsItem* news_recent(int k)
+{
+    int total = g_news_n, idx;
+    if (total <= 0 || k < 0 || k >= total) return NULL;
+    if (total < MAX_NEWS) idx = total - 1 - k;
+    else idx = ((g_news_head - 1 - k) % MAX_NEWS + MAX_NEWS) % MAX_NEWS;
+    return &g_news[idx];
+}
+
+static int news_stock_of_type(int sector_filter, int type_ok)
+{
+    /* 从指定行业里随机挑一支还在交易的股票，没有就退化为任意 */
+    int pool[STOCK_COUNT], n = 0, i;
+    for (i = 0; i < STOCK_COUNT; i++) {
+        if (player.stocks[i].status == STK_DELISTED) continue;
+        if (sector_filter >= 0 && player.stocks[i].sector != sector_filter) continue;
+        pool[n++] = i;
+    }
+    if (n == 0) return -1;
+    (void)type_ok;
+    return pool[rand() % n];
+}
+
+/* —— 生成：娱乐类 —— */
+static void news_gen_ent(void)
+{
+    char nm[40], nm2[40], head[120], body[300];
+    const char* job;
+    const char* place;
+    int age, r, stock, impact, ttl;
+
+    stk_rand_name(nm, sizeof nm);
+    job = stk_pick(ENT_JOB, ARRN(ENT_JOB));
+    place = stk_pick(ENT_PLACE, ARRN(ENT_PLACE));
+    age = stk_rnd(18, 60);
+
+    /* 60% 关联传媒股，其余让大盘沾点情绪 */
+    stock = (rand() % 100 < 60) ? news_stock_of_type(7, 1) : -1;
+    ttl = stk_rnd(40, 110);
+    r = rand() % 100;
+
+    if (r < 28) {
+        /* 丑闻 */
+        const EntBad* bad = &ENT_BAD[rand() % ARRN(ENT_BAD)];
+        const char* what = bad->what;
+        const char* why  = bad->why;
+        const char* rel = stk_pick(ENT_REL, ARRN(ENT_REL));
+        stk_rand_name(nm2, sizeof nm2);
+        snprintf(head, sizeof head, "【娱乐】%s%s在%s%s", job, nm, place, what);
+        snprintf(body, sizeof body,
+                 "据坤透社爆料，时年%d岁的%s%s在%s%s。据%s的%s爆料，%s。"
+                 "当晚品牌方连夜撤下全部物料，坤城几家院线已经把排片压到最低。",
+                 age, job, nm, place, what, nm, rel, why);
+        impact = -stk_rnd(8, 26);
+        stock = (stock < 0) ? news_stock_of_type(7, 1) : stock;
+    } else if (r < 38) {
+        /* 死亡 */
+        const char* how = stk_pick(ENT_DEAD, ARRN(ENT_DEAD));
+        age = stk_rnd(45, 88);
+        snprintf(head, sizeof head, "【娱乐】%s%s%s，享年%d岁", job, nm, how, age);
+        snprintf(body, sizeof body,
+                 "据坤透社爆料，时年%d岁的%s%s%s。据其家人透露，%s这两年身体一直不好，"
+                 "但为了合约还在硬撑。消息传出后，坤城几家影视公司的股价应声而动。",
+                 age, job, nm, how, nm);
+        impact = -stk_rnd(5, 15);
+        stock = (stock < 0) ? news_stock_of_type(7, 1) : stock;
+    } else if (r < 48) {
+        /* 婚讯 / 私生活，轻微利多 */
+        snprintf(head, sizeof head, "【娱乐】%s%s宣布婚讯，对象是圈外人", job, nm);
+        snprintf(body, sizeof body,
+                 "据坤透社爆料，时年%d岁的%s%s在%s被拍到与一位圈外人士牵手。"
+                 "据%s身边人爆料，两人已经交往三年，这次是真的准备定下来了。",
+                 age, job, nm, place, nm);
+        impact = stk_rnd(3, 10);
+    } else if (r < 88) {
+        /* 新作品 */
+        const char* good = stk_pick(ENT_GOOD, ARRN(ENT_GOOD));
+        snprintf(head, sizeof head, "【娱乐】%s%s%s", job, nm, good);
+        snprintf(body, sizeof body,
+                 "据坤透社爆料，时年%d岁的%s%s今天在坤城宣布%s。据其%s透露，这个项目准备了两年，"
+                 "中间差点被资方砍掉。坤城传媒板块今天的情绪明显不太一样。",
+                 age, job, nm, good, stk_pick(ENT_REL, ARRN(ENT_REL)));
+        impact = stk_rnd(6, 22);
+        stock = (stock < 0) ? news_stock_of_type(7, 1) : stock;
+    } else {
+        /* 塌房后复出 */
+        snprintf(head, sizeof head, "【娱乐】%s%s沉寂两年后复出，首站选在坤城", job, nm);
+        snprintf(body, sizeof body,
+                 "据坤透社爆料，时年%d岁的%s%s在%s宣布复出。据其%s透露，"
+                 "这两年他/她一直在还债，也一直在等一个机会。市场买不买账，明天见分晓。",
+                 age, job, nm, place, stk_pick(ENT_REL, ARRN(ENT_REL)));
+        impact = stk_rnd(-8, 12);
+    }
+
+    news_push(NEWS_TYPE_ENT, stock, -1, impact, ttl, head, body);
+}
+
+/* —— 生成：经济类 —— */
+static void news_gen_eco(void)
+{
+    char head[120], body[300];
+    int stock, impact, ttl, r;
+    const char* nm;
+
+    /* 优先挑已经出问题的票 —— 让退市有迹可循 */
+    stock = -1;
+    {
+        int i, cand = -1;
+        for (i = 0; i < STOCK_COUNT; i++) {
+            if (player.stocks[i].status == STK_DELISTED) continue;
+            if (player.stocks[i].status == STK_RISK) { cand = i; break; }
+        }
+        if (cand < 0 || rand() % 100 < 55) stock = news_stock_of_type(-1, 1);
+        else stock = cand;
+    }
+    if (stock < 0) return;
+    nm = player.stocks[stock].name;
+    ttl = stk_rnd(50, 120);
+    r = rand() % 100;
+
+    if (r < 45) {
+        const char* what = stk_pick(ECO_BAD, ARRN(ECO_BAD));
+        snprintf(head, sizeof head, "【经济】%s%s", nm, what);
+        snprintf(body, sizeof body,
+                 "据坤透社爆料，%s（%s板块）今日公告：%s。"
+                 "知情人士称，问题从半年前就开始了，只是一直压着没爆。"
+                 "坤城本地机构今天已经在往外跑了。",
+                 nm, STOCK_SECTOR_NAME[player.stocks[stock].sector], what);
+        impact = -stk_rnd(10, 32);
+    } else if (r < 80) {
+        const char* what = stk_pick(ECO_GOOD, ARRN(ECO_GOOD));
+        snprintf(head, sizeof head, "【经济】%s%s", nm, what);
+        snprintf(body, sizeof body,
+                 "据坤透社爆料，%s旗下公司%s。业内人士认为，这轮动作会重塑整个%s板块的格局。"
+                 "消息落地后，坤城几家券商连夜上调了评级。",
+                 nm, what, STOCK_SECTOR_NAME[player.stocks[stock].sector]);
+        impact = stk_rnd(8, 25);
+    } else {
+        const MacroPolicy* pol = &ECO_POLICY[rand() % ARRN(ECO_POLICY)];
+        snprintf(head, sizeof head, "【经济】%s，市场情绪生变", pol->txt);
+        snprintf(body, sizeof body,
+                 "据坤透社爆料，%s。这条消息直接影响%s板块的估值逻辑，"
+                 "%s作为板块龙头首当其冲。分析人士提醒：政策底不等于市场底。",
+                 pol->txt, STOCK_SECTOR_NAME[pol->sector], nm);
+        impact = stk_rnd(-18, 14);
+        news_push(NEWS_TYPE_ECO, -1, pol->sector, impact, ttl, head, body);
+        return;
+    }
+
+    news_push(NEWS_TYPE_ECO, stock, -1, impact, ttl, head, body);
+}
+
+/* —— 生成：政治类 —— */
+static void news_gen_pol(void)
+{
+    char nm[40], head[120], body[300];
+    int age, impact, ttl, r, sector;
+
+    stk_rand_name(nm, sizeof nm);
+    age = stk_rnd(30, 80);
+    ttl = stk_rnd(60, 140);
+
+    r = rand() % 100;
+    if (r < 55) {
+        const char* post = stk_pick(POL_POST, ARRN(POL_POST));
+        const char* ev = stk_pick(POL_EVENT, ARRN(POL_EVENT));
+        /* 政策倾向：选地产 or 金融 or 能源 */
+        static const int pol_sectors[] = { 2, 1, 5, 6 };
+        sector = pol_sectors[rand() % 4];
+        snprintf(head, sizeof head, "【政治】%s%s%s", nm, ev, post);
+        snprintf(body, sizeof body,
+                 "据坤透社爆料，时年%d岁的%s%s%s。他在竞选时承诺，"
+                 "会把土地供应和产业补贴往%s方向倾斜。"
+                 "坤城%s板块的老板们今晚大概睡不着。",
+                 age, nm, ev, post, STOCK_SECTOR_NAME[sector], STOCK_SECTOR_NAME[sector]);
+        impact = stk_rnd(-16, 22);
+    } else if (r < 82) {
+        const MacroPolicy* pol = &ECO_POLICY[rand() % ARRN(ECO_POLICY)];
+        sector = pol->sector;
+        snprintf(head, sizeof head, "【政治】%s，%s板块承压", pol->txt, STOCK_SECTOR_NAME[sector]);
+        snprintf(body, sizeof body,
+                 "据坤透社爆料，坤城市政府今日宣布：%s。"
+                 "政策直接指向%s，短期内该板块的资金成本会明显上升。"
+                 "有人连夜改方案，有人连夜跑路。",
+                 pol->txt, STOCK_SECTOR_NAME[sector]);
+        impact = stk_rnd(-22, 8);
+    } else {
+        const char* post = stk_pick(POL_POST, ARRN(POL_POST));
+        snprintf(head, sizeof head, "【政治】%s%s因丑闻辞职，职位悬空", post, nm);
+        snprintf(body, sizeof body,
+                 "据坤透社爆料，时年%d岁的%s被曝出与本地开发商存在利益输送，"
+                 "今日宣布辞去%s职务。坤城政商两界都在等下一任是谁。",
+                 age, nm, post);
+        sector = 2;
+        impact = -stk_rnd(8, 20);
+    }
+
+    news_push(NEWS_TYPE_POL, -1, sector, impact, ttl, head, body);
+}
+
+static void news_generate_one(void)
+{
+    int tries;
+    for (tries = 0; tries < 6; tries++) {
+        int r = rand() % 100;
+        int before = g_news_n;
+        int pushed;
+        if (r < 50)      { news_gen_ent(); pushed = g_news_n > before; }
+        else if (r < 85) { news_gen_eco(); pushed = g_news_n > before; }
+        else             { news_gen_pol(); pushed = g_news_n > before; }
+        /* 环形已满时 g_news_n 不再增长，用 unread 计数兜底判断 */
+        if (pushed || g_news_n >= MAX_NEWS) return;
+        if (tries >= 2) return;      /* 实在凑不出新标题就收手 */
+    }
+}
+
+/* 每个交易日开盘：1~2 条新新闻 */
+static void news_daily_refresh(void)
+{
+    int n = 1 + (rand() % 100 < 35 ? 1 : 0);
+    int i;
+    for (i = 0; i < n; i++) news_generate_one();
+}
+
+/*================ v5.1 股票市场引擎 ================*/
+
+/* 当前涨跌停幅度（%）*/
+static int stk_limit_pct(const Stock* s)
+{
+    return (s->status == STK_RISK) ? STOCK_ST_LIMIT_PCT : STOCK_LIMIT_PCT;
+}
+
+/* 单 tick 推进一支股票（纯随机 + 趋势，没有任何“保底回升”） */
+static void stk_tick_one(int idx)
+{
+    Stock* s = &player.stocks[idx];
+    int d, drift, limit_hi, limit_lo;
+
+    if (s->status == STK_DELISTED || s->status == STK_HALT) {
+        s->price_change = 0;
+        return;
+    }
+
+    /* 趋势衰减 */
+    if (s->drift_ticks > 0) {
+        s->drift_ticks--;
+        if (s->drift_ticks == 0) s->drift = 0;
+    }
+    drift = s->drift;
+
+    /* 随机游走（单位：分）：波动率决定幅度，允许连续下跌，没有回归力 */
+    d = stk_rnd(-s->volatility * 4, s->volatility * 4);
+    if (s->volatility >= 18 && (rand() % 100) < 12) d *= 2;   /* 尾部长跳 */
+    d += drift;
+
+    /* 市场情绪：景气好时买盘略多，差时卖压略重。
+       这不是保底回升 —— 情绪为负时同样在往下推。 */
+    if ((rand() % 100) < 15) {
+        int mood = g_market_mood + (s->sector % 3) - 1;
+        if (mood > 0) d += stk_rnd(1, 2 + mood / 3);
+        else if (mood < 0) d -= stk_rnd(1, 2 + (-mood) / 3);
+    }
+
+    if (d == 0) d = (rand() % 2) ? 1 : -1;
+
+    /* 涨跌停板 */
+    limit_hi = s->prev_close * (100 + stk_limit_pct(s)) / 100;
+    limit_lo = s->prev_close * (100 - stk_limit_pct(s)) / 100;
+    if (limit_lo < 100) limit_lo = 100;
+
+    s->current_price += d;
+    if (s->current_price > limit_hi) { s->current_price = limit_hi; s->limit_lock = 1; }
+    else if (s->current_price < limit_lo) { s->current_price = limit_lo; s->limit_lock = -1; }
+    else s->limit_lock = 0;
+
+    if (s->current_price < 100) s->current_price = 100;   /* 面值 1 元 */
+
+    s->price_change = s->current_price - s->prev_close;
+    if (s->current_price > s->day_high) s->day_high = s->current_price;
+    if (s->current_price < s->day_low)  s->day_low  = s->current_price;
+}
+
+/* 融资盘爆仓：担保比例 = (持仓市值 + 现金) / 负债 */
+static money_t stk_hold_value(void)
+{
+    int i;
+    money_t v = 0;
+    for (i = 0; i < STOCK_COUNT; i++)
+        v += (money_t)player.invested_stocks[i] * player.stocks[i].current_price / 100;
+    return v;
+}
+
+static int stk_maint_ratio(void)
+{
+    money_t asset;
+    if (player.stock_loan_total <= 0) return 9999;
+    asset = stk_hold_value() + (player.kun_coins > 0 ? player.kun_coins : 0);
+    return (int)(asset * 100 / player.stock_loan_total);
+}
+
+/* 返回本次强平的股票数，同时填 out 文本 */
+static int stk_force_liquidate(char* out, size_t cap)
+{
+    int i, n = 0;
+    money_t repaid = 0, got = 0;
+
+    if (out && cap) out[0] = 0;
+    if (player.stock_loan_total <= 0) return 0;
+
+    /* 从亏得最狠的持仓开始卖，直到担保比例回到 150% 以上 */
+    for (;;) {
+        int worst = -1;
+        int worst_score = 1 << 30;
+        for (i = 0; i < STOCK_COUNT; i++) {
+            int sc;
+            if (player.invested_stocks[i] <= 0) continue;
+            if (player.stocks[i].status == STK_DELISTED) continue;
+            sc = player.stocks[i].price_change * 100 / (player.stocks[i].prev_close > 0 ? player.stocks[i].prev_close : 1);
+            if (sc < worst_score) { worst_score = sc; worst = i; }
+        }
+        if (worst < 0) break;
+        if (player.stock_loan_total <= 0) break;
+        if (stk_maint_ratio() >= 150 && n > 0) break;
+
+        {
+            int idx = worst;
+            int shares = player.invested_stocks[idx];
+            money_t v = (money_t)shares * player.stocks[idx].current_price / 100;
+            char nb[64];
+
+            player.invested_stocks[idx] = 0;
+            got += v;
+            /* 先还该股的融资，再还总负债 */
+            if (player.stock_margin_debt[idx] > 0) {
+                money_t pay = (v < player.stock_margin_debt[idx]) ? v : player.stock_margin_debt[idx];
+                player.stock_margin_debt[idx] -= pay;
+                player.stock_loan_total -= pay;
+                repaid += pay;
+                v -= pay;
+            } else if (player.stock_loan_total > 0) {
+                money_t pay = (v < player.stock_loan_total) ? v : player.stock_loan_total;
+                player.stock_loan_total -= pay;
+                repaid += pay;
+                v -= pay;
+            }
+            if (v > 0) add_coins(v);
+
+            n++;
+            if (!out || !cap) continue;
+            snprintf(nb, sizeof nb, "%s×%d ", player.stocks[idx].name, shares);
+            {
+                size_t used = strlen(out);
+                if (used + 2 < cap) strncat(out, nb, cap - used - 1);
+            }
+        }
+    }
+
+    /* 卖完了还不够还债 -> 扣现金，仍不够就记破产 */
+    if (player.stock_loan_total > 0) {
+        money_t pay = (player.kun_coins < player.stock_loan_total) ? player.kun_coins : player.stock_loan_total;
+        if (pay > 0) remove_coins(pay);
+        player.stock_loan_total -= pay;
+        if (player.stock_loan_total > 0) {
+            player.been_bankrupt = true;
+            player.stock_loan_total = 0;
+        }
+    }
+    for (i = 0; i < STOCK_COUNT; i++) player.stock_margin_debt[i] = 0;
+
+    if (n > 0) {
+        player.stock_force_closed += n;
+        (void)repaid;
+    }
+    return n;
+}
+
+/* 强制平仓（退市清算）：某只股退市后按极低价变现 */
+static money_t stk_delist_settle(int idx)
+{
+    Stock* s = &player.stocks[idx];
+    int shares = player.invested_stocks[idx];
+    money_t back;
+
+    s->status = STK_DELISTED;
+    s->limit_lock = 0;
+    s->drift = 0;
+    s->drift_ticks = 0;
+    s->reipo_days = 0;
+    player.stock_delist_count++;
+
+    /* 退市整理期折价：按最后价的 18% 清算 */
+    back = (money_t)shares * (s->current_price * 18 / 100) / 100;
+    if (shares > 0) {
+        if (back > 0) add_coins(back);
+        player.invested_stocks[idx] = 0;
+    }
+    /* 该股融资作废，直接还掉对应部分 */
+    if (player.stock_margin_debt[idx] > 0) {
+        money_t pay = (back < player.stock_margin_debt[idx]) ? back : player.stock_margin_debt[idx];
+        player.stock_loan_total -= pay;
+        if (player.stock_loan_total < 0) player.stock_loan_total = 0;
+        player.stock_margin_debt[idx] = 0;
+    }
+    s->current_price = (s->current_price * 18 / 100 > 0) ? (s->current_price * 18 / 100) : 1;
+    return back;
+}
+
+/* 交易日收盘结算：判 ST、判退市、刷新闻、重置涨跌停 */
+static void stk_day_close(void)
+{
+    int i;
+    for (i = 0; i < STOCK_COUNT; i++) {
+        Stock* s = &player.stocks[i];
+
+        /* 退市股：满 40 个交易日重新上市，补回市场供给 */
+        if (s->status == STK_DELISTED) {
+            s->reipo_days++;
+            if (s->reipo_days >= 40) {
+                char h[120], b[300];
+                s->status = STK_NORMAL;
+                s->current_price = s->base_price;
+                s->prev_close = s->base_price;
+                s->open_price = s->base_price;
+                s->day_high = s->base_price;
+                s->day_low = s->base_price;
+                s->bad_days = 0;
+                s->st_days = 0;
+                s->drift = 0;
+                s->drift_ticks = 0;
+                s->reipo_days = 0;
+                player.stock_delist_count--;
+                if (player.stock_delist_count < 0) player.stock_delist_count = 0;
+                snprintf(h, sizeof h, "【经济】%s完成重组，今日重新挂牌", s->name);
+                snprintf(b, sizeof b,
+                         "据坤透社爆料，%s在退市 %d 个交易日后完成债务重组与资产注入，"
+                         "今日重新在坤城证券交易所挂牌。开盘价 %d.%02d 元。",
+                         s->name, 40, s->base_price / 100, s->base_price % 100);
+                news_push(NEWS_TYPE_ECO, -1, -1, 0, 1, h, b);
+            }
+            continue;
+        }
+
+        s->prev_close = s->current_price;
+        s->open_price = s->current_price;
+        s->day_high = s->current_price;
+        s->day_low = s->current_price;
+        s->limit_lock = 0;
+        s->price_change = 0;
+
+        /* 停牌倒计时 */
+        if (s->status == STK_HALT) {
+            if (s->halt_days > 0) s->halt_days--;
+            if (s->halt_days <= 0) {
+                stk_delist_settle(i);
+            }
+            continue;
+        }
+
+        /* 低迷计数 */
+        if (s->current_price < s->base_price * STOCK_ST_LINE / 100) s->bad_days++;
+        else s->bad_days = 0;
+
+        /* 退市线：跌破基准价 12% 直接进整理期 */
+        if (s->current_price < s->base_price * STOCK_DELIST_LINE / 100) {
+            s->status = STK_HALT;
+            s->halt_days = 1;
+            {
+                char h[120], b[300];
+                snprintf(h, sizeof h, "【经济】%s触发退市整理，明日起停牌", s->name);
+                snprintf(b, sizeof b,
+                         "据坤透社爆料，%s股价已跌破面值，交易所决定对其启动退市整理程序。"
+                         "持仓者将在停牌结束后按清算价强制变现，血本无归的概率很大。",
+                         s->name);
+                news_push(NEWS_TYPE_ECO, -1, -1, 0, 1, h, b);
+            }
+            continue;
+        }
+
+        /* ST 判定 */
+        if (s->status == STK_NORMAL && s->bad_days >= 2) {
+            s->status = STK_RISK;
+            s->st_days = 0;
+            {
+                char h[120], b[300];
+                snprintf(h, sizeof h, "【经济】%s被实施退市风险警示，简称变更为 ST%s", s->name, s->name);
+                snprintf(b, sizeof b,
+                         "据坤透社爆料，%s连续多日跌破净资产，交易所对其股票实施退市风险警示。"
+                         "涨跌幅限制收窄至 ±5%%，连续 %d 个交易日未能改善将被终止上市。",
+                         s->name, STOCK_ST_DAYS);
+                news_push(NEWS_TYPE_ECO, -1, -1, 0, 1, h, b);
+            }
+        } else if (s->status == STK_RISK) {
+            s->st_days++;
+            if (s->st_days >= 10 ||
+                (s->st_days >= STOCK_ST_DAYS && s->current_price < s->base_price * 55 / 100)) {
+                s->status = STK_HALT;
+                s->halt_days = 1;
+                {
+                    char h[120], b[300];
+                    snprintf(h, sizeof h, "【经济】ST%s连续亏损，交易所决定终止其上市", s->name);
+                    snprintf(b, sizeof b,
+                             "据坤透社爆料，ST%s在风险警示期内仍未改善经营，"
+                             "交易所今日作出终止上市决定。停牌一日后进入退市整理，"
+                             "持有该股的散户大概率要认赔。", s->name);
+                    news_push(NEWS_TYPE_ECO, -1, -1, 0, 1, h, b);
+                }
+            } else if (s->current_price > s->base_price * 80 / 100) {
+                /* 摘帽 */
+                s->status = STK_NORMAL;
+                s->st_days = 0;
+                s->bad_days = 0;
+            }
+        }
+    }
+
+    player.stock_day++;
+    player.stock_tick = 0;
+
+    /* 大盘情绪漂移 */
+    g_market_mood += stk_rnd(-3, 3);
+    if (g_market_mood > 10) g_market_mood = 10;
+    if (g_market_mood < -10) g_market_mood = -10;
+
+    news_daily_refresh();
+}
+
+/* 每个 tick 推进全市场 */
+static void stk_market_tick(void)
+{
+    int i;
+
+    for (i = 0; i < STOCK_COUNT; i++) stk_tick_one(i);
+
+    /* 新闻影响倒计时 */
+    for (i = 0; i < g_news_n; i++) {
+        if (g_news[i].tick_left > 0) g_news[i].tick_left--;
+    }
+
+    /* 融资盘风控 */
+    if (player.stock_loan_total > 0 && stk_maint_ratio() < STOCK_MAINT_RATIO) {
+        char buf[256];
+        stk_force_liquidate(buf, sizeof buf);
+        {
+            char h[120], b[300];
+            snprintf(h, sizeof h, "【经济】券商风控触发：有账户被强制平仓");
+            snprintf(b, sizeof b,
+                     "据坤透社爆料，坤城某券商今日对多个融资账户执行强制平仓，"
+                     "涉及标的包括 %s。担保比例跌破 %d%% 的账户，没有任何商量余地。",
+                     buf[0] ? buf : "多只个股", STOCK_MAINT_RATIO);
+            news_push(NEWS_TYPE_ECO, -1, -1, 0, 1, h, b);
+        }
+    }
+
+    player.stock_tick++;
+    if (player.stock_tick >= STOCK_TICKS_PER_DAY) stk_day_close();
+}
+
+void init_properties() {
      const char* prop_names[] = {"公寓", "别墅", "写字楼", "购物中心", "酒店", "度假村", "私人岛屿", "商业街", "科技园区", "国际机场"};
      const char* prop_descs[] = {
          "小型公寓，适合单身",
@@ -2169,8 +3013,85 @@ void process_tongcheng_offer(int chatter_index) {
 #endif
  }
  
+/*=========== v5.1 股票 & 新闻持久化 ===========*/
+#define STOCK_SAVE_MAGIC 0x4B54534B   /* "KSTK" */
+
+static void save_stock_state()
+{
+    char path[512];
+    FILE* f;
+    int magic = STOCK_SAVE_MAGIC, ver = 1, i;
+
+    ensure_dir(SAVE_DIR);
+    snprintf(path, sizeof(path), "%s", STOCK_SAVE_FILE);
+    f = fopen(path, "wb");
+    if (!f) return;
+
+    fwrite(&magic, sizeof(int), 1, f);
+    fwrite(&ver, sizeof(int), 1, f);
+    fwrite(&player.stock_day, sizeof(int), 1, f);
+    fwrite(&player.stock_tick, sizeof(int), 1, f);
+    fwrite(&player.stock_force_closed, sizeof(int), 1, f);
+    fwrite(&player.stock_margin_bought, sizeof(int), 1, f);
+    fwrite(&player.stock_delist_count, sizeof(int), 1, f);
+    fwrite(&player.stock_news_unread, sizeof(int), 1, f);
+    fwrite(&player.stock_loan_total, sizeof(money_t), 1, f);
+    fwrite(&g_market_mood, sizeof(int), 1, f);
+    fwrite(&g_news_n, sizeof(int), 1, f);
+    fwrite(&g_news_head, sizeof(int), 1, f);
+
+    for (i = 0; i < STOCK_COUNT; i++) fwrite(&player.stocks[i], sizeof(Stock), 1, f);
+    for (i = 0; i < STOCK_COUNT; i++) {
+        fwrite(&player.invested_stocks[i], sizeof(int), 1, f);
+        fwrite(&player.stock_margin_debt[i], sizeof(money_t), 1, f);
+    }
+    if (g_news_n > 0) fwrite(g_news, sizeof(NewsItem), (size_t)g_news_n, f);
+    fclose(f);
+}
+
+static void load_stock_state()
+{
+    char path[512];
+    FILE* f;
+    int magic = 0, ver = 0, i;
+
+    snprintf(path, sizeof(path), "%s", STOCK_SAVE_FILE);
+    f = fopen(path, "rb");
+    if (!f) return;
+    if (fread(&magic, sizeof(int), 1, f) != 1 || magic != STOCK_SAVE_MAGIC) { fclose(f); return; }
+    if (fread(&ver, sizeof(int), 1, f) != 1) { fclose(f); return; }
+
+    if (fread(&player.stock_day, sizeof(int), 1, f) != 1) { fclose(f); return; }
+    if (fread(&player.stock_tick, sizeof(int), 1, f) != 1) { fclose(f); return; }
+    if (fread(&player.stock_force_closed, sizeof(int), 1, f) != 1) { fclose(f); return; }
+    if (fread(&player.stock_margin_bought, sizeof(int), 1, f) != 1) { fclose(f); return; }
+    if (fread(&player.stock_delist_count, sizeof(int), 1, f) != 1) { fclose(f); return; }
+    if (fread(&player.stock_news_unread, sizeof(int), 1, f) != 1) { fclose(f); return; }
+    if (fread(&player.stock_loan_total, sizeof(money_t), 1, f) != 1) { fclose(f); return; }
+    if (fread(&g_market_mood, sizeof(int), 1, f) != 1) { fclose(f); return; }
+    if (fread(&g_news_n, sizeof(int), 1, f) != 1) { fclose(f); return; }
+    if (fread(&g_news_head, sizeof(int), 1, f) != 1) { fclose(f); return; }
+
+    for (i = 0; i < STOCK_COUNT; i++) {
+        if (fread(&player.stocks[i], sizeof(Stock), 1, f) != 1) break;
+    }
+    for (i = 0; i < STOCK_COUNT; i++) {
+        if (fread(&player.invested_stocks[i], sizeof(int), 1, f) != 1) break;
+        if (fread(&player.stock_margin_debt[i], sizeof(money_t), 1, f) != 1) break;
+    }
+    if (g_news_n > MAX_NEWS) g_news_n = MAX_NEWS;
+    if (g_news_n > 0) {
+        if (fread(g_news, sizeof(NewsItem), (size_t)g_news_n, f) != (size_t)g_news_n)
+            g_news_n = 0;
+    }
+    fclose(f);
+}
+
  void save_game() {
      char filepath[512];
+
+     /* v5.1 股票 / 新闻状态（独立文件，老存档不存在也不影响） */
+     save_stock_state();
      
      // 创建目录结构
      ensure_dir(SAVE_DIR);
@@ -2624,8 +3545,11 @@ void process_tongcheng_offer(int chatter_index) {
         }
     }
     
-    print_colored(COLOR_GREEN, "\n?? 游戏存档已加载！\n");
-}
+     print_colored(COLOR_GREEN, "\n?? 游戏存档已加载！\n");
+
+     /* v5.1 股票 / 新闻状态 */
+     load_stock_state();
+ }
 
 //================ 福布斯排行榜系统 ================
  ForbesRankingEntry forbes_list[MAX_FORBES_ENTRIES];
@@ -3680,17 +4604,14 @@ void save_stock_history() {
 }
 
 void update_stock_prices() {
-     time_t now = time(NULL);
-    for (int i = 0; i < 25; i++) {
-        if (now - player.stocks[i].last_update >= 60) {
-             int change = (rand() % (player.stocks[i].volatility * 2 + 1)) - player.stocks[i].volatility;
-             player.stocks[i].current_price += change;
-             if (player.stocks[i].current_price < 10) player.stocks[i].current_price = 10;
-             player.stocks[i].price_change = change;
-             player.stocks[i].last_update = now;
-         }
-     }
-     save_stock_history();
+    /* v5.1：走统一的真实市场引擎，按 tick 补算，避免离线期间“偷偷涨价” */
+    int i;
+    for (i = 0; i < STOCK_COUNT; i++) {
+        if (time(NULL) - player.stocks[i].last_update >= 60) {
+            player.stocks[i].last_update = time(NULL);
+        }
+    }
+    save_stock_history();
  }
  
  //================ 被动收入计算 ================
@@ -4614,16 +5535,33 @@ void do_task(int task_index) {
      check_achievements();
  }
  
- void buy_stock(int stock_index, int amount) {
-     if (stock_index < 0 || stock_index >= 25) return;
+/* v5.1：margin=1 融资买入（自付 50%，券商垫 50%） */
+void buy_stock_ext(int stock_index, int amount, int margin) {
+     if (stock_index < 0 || stock_index >= STOCK_COUNT) return;
      if (amount <= 0) return;
-     
+
      Stock* stock = &player.stocks[stock_index];
-     int total_cost = stock->current_price * amount;
-     
+     money_t gross = (money_t)stock->current_price * amount / 100;
+     money_t self_pay;
+
+     if (stock->status == STK_DELISTED) {
+         print_colored(COLOR_RED, "该股票已退市，无法买入。\n");
+         return;
+     }
+     if (stock->status == STK_HALT) {
+         print_colored(COLOR_RED, "该股票已停牌，无法交易。\n");
+         return;
+     }
+     if (stock->limit_lock == 1) {
+         print_colored(COLOR_RED, "该股票封涨停，买盘排不进去。\n");
+         return;
+     }
+
+     self_pay = margin ? gross / 2 : gross;
+
      // v4.1 全梭哈确认：当花费超过当前坤币50%时弹出确认
-     if (total_cost > 0 && player.kun_coins > 0 && total_cost > player.kun_coins / 2) {
-         printf("\n?? 警告：此操作将花费 %d 坤币（当前余额：%lld 坤币）\n", total_cost, player.kun_coins);
+     if (self_pay > 0 && player.kun_coins > 0 && self_pay > player.kun_coins / 2) {
+         printf("\n?? 警告：此操作将花费 %lld 坤币（当前余额：%lld 坤币）\n", self_pay, player.kun_coins);
          printf("确认要大手笔买入吗？(1=确认, 0=取消): ");
          int confirm = get_valid_input(0, 1);
          if (confirm == 0) {
@@ -4631,21 +5569,32 @@ void do_task(int task_index) {
              return;
          }
      }
-     
-     if (!remove_coins(total_cost)) {
-         print_colored(COLOR_RED, "坤币不足！需要 %d 坤币\n", total_cost);
+
+     if (!remove_coins(self_pay)) {
+         print_colored(COLOR_RED, "坤币不足！需要 %lld 坤币\n", self_pay);
          return;
      }
-     
-     player.total_expenses += total_cost;
+
+     player.total_expenses += self_pay;
      player.invested_stocks[stock_index] += amount;
-     
-     print_colored(COLOR_GREEN, "\n?? 购买股票：%s × %d\n", stock->name, amount);
-     printf("   单价：%d 坤币\n", stock->current_price);
-     printf("   总价：%d 坤币\n", total_cost);
-     
+
+     if (margin) {
+         money_t loan = gross - self_pay;
+         player.stock_margin_debt[stock_index] += loan;
+         player.stock_loan_total += loan;
+         player.stock_margin_bought++;
+         printf("\n" COLOR_MAGENTA "[融资买入] %s × %d" COLOR_RESET "\n", stock->name, amount);
+         printf("   融资额：%lld 坤币（利率按日计，跌穿 %d%% 担保比例将被强平）\n",
+                loan, STOCK_MAINT_RATIO);
+     } else {
+         printf("\n?? 购买股票：%s × %d\n", stock->name, amount);
+     }
+     printf("   单价：%.2f 坤币\n", stock->current_price / 100.0);
+     printf("   自付：%lld 坤币\n", self_pay);
+     printf("   当前担保比例：%d%%\n", stk_maint_ratio());
+
      for (int i = 0; i < MAX_QUESTS; i++) {
-         if (!player.active_quests[i].completed && 
+         if (!player.active_quests[i].completed &&
              strstr(player.active_quests[i].description, "股票投资") != NULL) {
              player.active_quests[i].progress++;
              if (player.active_quests[i].progress >= player.active_quests[i].requirement) {
@@ -4654,25 +5603,57 @@ void do_task(int task_index) {
          }
      }
  }
- 
+
+ void buy_stock(int stock_index, int amount) {
+     buy_stock_ext(stock_index, amount, 0);
+ }
+
  void sell_stock(int stock_index, int amount) {
-     if (stock_index < 0 || stock_index >= 25) return;
+     if (stock_index < 0 || stock_index >= STOCK_COUNT) return;
      if (amount <= 0) return;
      if (player.invested_stocks[stock_index] < amount) {
          print_colored(COLOR_RED, "持股不足！\n");
          return;
      }
-     
+
      Stock* stock = &player.stocks[stock_index];
-     int total_value = stock->current_price * amount;
-     
-     add_coins(total_value);
+     if (stock->status == STK_HALT) {
+         print_colored(COLOR_RED, "该股票已停牌，卖不出去。\n");
+         return;
+     }
+     if (stock->status == STK_DELISTED) {
+         print_colored(COLOR_RED, "该股票已退市。\n");
+         return;
+     }
+     if (stock->limit_lock == -1) {
+         print_colored(COLOR_RED, "该股票封跌停，卖单排队但无人接。\n");
+         return;
+     }
+
+     money_t total_value = (money_t)stock->current_price * amount / 100;
+     int held_before = player.invested_stocks[stock_index];
+     money_t repay = 0;
+
+     /* 平掉对应比例的融资债务 */
+     if (player.stock_margin_debt[stock_index] > 0 && held_before > 0) {
+         repay = player.stock_margin_debt[stock_index] * amount / held_before;
+         if (repay > total_value) repay = total_value;
+         player.stock_margin_debt[stock_index] -= repay;
+         player.stock_loan_total -= repay;
+         if (player.stock_loan_total < 0) player.stock_loan_total = 0;
+     }
+
+     add_coins(total_value - repay);
      player.total_income += total_value;
      player.invested_stocks[stock_index] -= amount;
-     
-     print_colored(COLOR_GREEN, "\n?? 出售股票：%s × %d\n", stock->name, amount);
-     printf("   单价：%d 坤币\n", stock->current_price);
-     printf("   总价：%d 坤币\n", total_value);
+
+     printf("\n?? 出售股票：%s × %d\n", stock->name, amount);
+     printf("   单价：%.2f 坤币\n", stock->current_price / 100.0);
+     printf("   总价：%lld 坤币\n", total_value);
+     if (repay > 0) printf("   其中偿还融资：%lld 坤币\n", repay);
+     if (player.stock_loan_total > 0)
+         printf("   剩余负债：%lld 坤币（担保比例 %d%%）\n",
+                player.stock_loan_total, stk_maint_ratio());
  }
  
  void buy_property(int property_index) {
@@ -5883,8 +6864,84 @@ void open_stock_chart_window() {
 }
 
 /*================ v5.0 TUI 股票终端 ================*/
+/*================ v5.0/v5.1 TUI 股票终端 ================*/
 static int g_stock_focus = 0;   /* 1 = 图表占满宽度（C 键切换） */
-static void stock_draw(int sel, int live, int blink, const char* msg)
+static int g_stock_view  = 0;   /* 0 = 行情   1 = 新闻 */
+static int g_news_filter = -1;  /* -1 全部 / 0 娱乐 / 1 经济 / 2 政治 */
+
+static const char* stk_status_tag(const Stock* s)
+{
+    switch (s->status) {
+    case STK_RISK:     return "ST";
+    case STK_HALT:     return "停";
+    case STK_DELISTED: return "退";
+    }
+    return "";
+}
+
+static int stk_status_color(const Stock* s)
+{
+    switch (s->status) {
+    case STK_RISK:     return TC_ORANGE;
+    case STK_HALT:     return TC_MAGENTA;
+    case STK_DELISTED: return TC_FAINT;
+    }
+    return TC_TEXT;
+}
+
+/* 新闻面板 */
+static void stock_draw_news(int x, int y, int w, int h, int filter)
+{
+    int row = 0, k;
+    NewsItem* it;
+    char line[320];
+    const char* ttl;
+
+    ttl = (filter < 0) ? "坤城新闻 · 全部"
+        : (filter == NEWS_TYPE_ENT ? "坤城新闻 · 娱乐"
+        : (filter == NEWS_TYPE_ECO ? "坤城新闻 · 经济" : "坤城新闻 · 政治"));
+    tc_panel(x, y, w, h, ttl, TC_BORDER, TC_BG2, TC_ORANGE);
+
+    if (g_news_n <= 0) {
+        tc_puts(x + 2, y + 1, "还没有新闻。市场安静得不像坤城。", TC_FAINT, TC_BG2);
+        return;
+    }
+
+    for (k = 0; k < g_news_n && row < h - 2; k++) {
+        int tc;
+        it = news_recent(k);
+        if (!it) break;
+        if (filter >= 0 && it->type != filter) continue;
+
+        tc = (it->type == NEWS_TYPE_ENT) ? TC_PINK :
+             (it->type == NEWS_TYPE_ECO ? TC_YELLOW : TC_CYAN);
+
+        /* 标题行：类型标签 + 标题 + 影响 */
+        snprintf(line, sizeof line, "%s", it->head);
+        tc_putsn(x + 2, y + 1 + row, w - 4, line, tc, TC_BG2);
+        if (w > 40 && it->impact != 0) {
+            char imp[32];
+            snprintf(imp, sizeof imp, "%+d%%", it->impact);
+            tc_puts(x + w - 8, y + 1 + row, imp,
+                    it->impact > 0 ? TC_RED : TC_GREEN, TC_BG2);
+        }
+        row++;
+        if (row >= h - 2) break;
+
+        /* 正文行（截断，够宽才画） */
+        if (w > 44) {
+            char clip[320];
+            int lim = (w - 12) / 2;   /* 中文按 2 列算 */
+            if (lim > 90) lim = 90;
+            if (lim < 8) lim = 8;
+            news_clip(it->body, clip, sizeof clip, lim);
+            tc_putsn(x + 2, y + 1 + row, w - 4, clip, TC_DIM, TC_BG2);
+            row++;
+        }
+    }
+}
+
+static void stock_draw(int sel, int live, int blink, const char* msg, int view = 0)
 {
     int W, H;
     int cy = 1, ch;
@@ -5899,7 +6956,7 @@ static void stock_draw(int sel, int live, int blink, const char* msg)
     ch = H - 3;
     tui_draw_topbar();
 
-    if (g_stock_focus) {
+    if (g_stock_focus || view == 1) {
         lw = 0;
         rx = 0;
         rw = W;
@@ -5910,53 +6967,91 @@ static void stock_draw(int sel, int live, int blink, const char* msg)
         if (rw < 34) { lw = W * 3 / 5; rx = lw + 1; rw = W - rx - 1; }
     }
 
-    s = &player.stocks[sel < 25 ? sel : 0];
+    s = &player.stocks[sel < STOCK_COUNT ? sel : 0];
 
     /* ===== 左侧行情榜 ===== */
-    {
+    if (lw > 0) {
         char ttl[64];
-        snprintf(ttl, sizeof ttl, "行情榜 %d/25", sel + 1);
+        snprintf(ttl, sizeof ttl, "行情榜 %d/%d", sel + 1, STOCK_COUNT);
         tc_panel(0, cy, lw, ch, ttl, TC_BORDER, TC_BG2, TC_YELLOW);
-    }
-    list_h = g_stock_focus ? 0 : (ch - 2);
-    if (list_h < 0) list_h = 0;
-    list_start = 0;
-    if (sel >= list_h) list_start = sel - list_h + 1;
 
-    for (i = 0; i < list_h && list_start + i < 25; i++) {
-        int idx = list_start + i;
-        Stock* st = &player.stocks[idx];
-        int y = cy + 1 + i;
-        int on = (idx == sel);
-        int bg = on ? TC_BGHI : TC_BG2;
-        char nb[8], pb[12], db[12];
+        list_h = ch - 2;
+        if (list_h < 0) list_h = 0;
+        list_start = 0;
+        if (sel >= list_h) list_start = sel - list_h + 1;
 
-        tc_fill(1, y, lw - 2, 1, " ", TC_TEXT, bg);
-        tc_put(1, y, on ? ">" : " ", on ? TC_YELLOW : TC_DIM, bg);
-        snprintf(nb, sizeof nb, "%02d", idx + 1);
-        tc_puts(3, y, nb, TC_FAINT, bg);
-        tc_putsn(6, y, 12, st->name, on ? TC_WHITE : TC_TEXT, bg);
+        for (i = 0; i < list_h && list_start + i < STOCK_COUNT; i++) {
+            int idx = list_start + i;
+            Stock* st = &player.stocks[idx];
+            int y = cy + 1 + i;
+            int on = (idx == sel);
+            int bg = on ? TC_BGHI : TC_BG2;
+            char nb[8], pb[12], db[12];
+            const char* tag = stk_status_tag(st);
+            int name_fg;
 
-        if (lw >= 34) {
-            snprintf(pb, sizeof pb, "%5d", st->current_price);
-            tc_puts(19, y, pb, on ? TC_WHITE : TC_DIM, bg);
-            snprintf(db, sizeof db, "%+4d", st->price_change);
-            tc_puts(25, y, db,
-                    st->price_change > 0 ? TC_RED : (st->price_change < 0 ? TC_GREEN : TC_FAINT), bg);
+            tc_fill(1, y, lw - 2, 1, " ", TC_TEXT, bg);
+            tc_put(1, y, on ? ">" : " ", on ? TC_YELLOW : TC_DIM, bg);
+            snprintf(nb, sizeof nb, "%02d", idx + 1);
+            tc_puts(3, y, nb, TC_FAINT, bg);
+
+            if (tag[0] && lw >= 34) {
+                tc_puts(6, y, tag, stk_status_color(st), bg);
+                name_fg = (st->status == STK_DELISTED) ? TC_FAINT : (on ? TC_WHITE : TC_TEXT);
+                tc_putsn(8, y, 10, st->name, name_fg, bg);
+            } else {
+                name_fg = (st->status == STK_DELISTED) ? TC_FAINT : (on ? TC_WHITE : TC_TEXT);
+                tc_putsn(6, y, 12, st->name, name_fg, bg);
+            }
+
+            if (lw >= 34) {
+                if (st->status == STK_DELISTED) {
+                    tc_puts(19, y, "退市", TC_FAINT, bg);
+                } else if (st->status == STK_HALT) {
+                    tc_puts(19, y, "停牌", TC_MAGENTA, bg);
+                } else {
+                    int dlt = st->current_price - st->prev_close;
+                    char pbuf[16], ptmp[16];
+                    stk_price_str(ptmp, sizeof ptmp, st->current_price);
+                    snprintf(pbuf, sizeof pbuf, "%7s", ptmp);
+                    tc_puts(19, y, pbuf, on ? TC_WHITE : TC_DIM, bg);
+                    snprintf(db, sizeof db, "%+5.1f%%",
+                             st->prev_close > 0
+                             ? (float)dlt * 100.0f / st->prev_close : 0.0f);
+                    tc_puts(27, y, db,
+                            dlt > 0 ? TC_RED : (dlt < 0 ? TC_GREEN : TC_FAINT), bg);
+                }
+            }
+            if (lw >= 40 && g_trend_n > 1 && st->status != STK_DELISTED) {
+                tc_spark(34, y, lw - 36, g_trend[idx], g_trend_n,
+                         g_trend[idx][0], TC_RED, TC_GREEN, bg);
+            }
         }
-        if (lw >= 42 && g_trend_n > 1) {
-            tc_spark(31, y, lw - 33, g_trend[idx], g_trend_n,
-                     g_trend[idx][0], TC_RED, TC_GREEN, bg);
-        }
     }
 
-    /* ===== 右侧：KPI ===== */
+    /* ===== 右侧：新闻 or 行情 ===== */
+    if (view == 1) {
+        stock_draw_news(rx, cy, rw, ch - 1, g_news_filter);
+        snprintf(buf, sizeof buf,
+                 " [N] 回行情  [1]娱乐 [2]经济 [3]政治 [0]全部  [PgUp/PgDn] 上下  [Esc] 返回 ");
+        tui_draw_keybar(buf);
+        if (msg && msg[0]) tc_puts(2, H - 1, msg, TC_YELLOW, TC_BG);
+        else tc_puts(2, H - 1, "坤透社 · 以上新闻均可能影响对应标的，别全信，也别全不信。", TC_FAINT, TC_BG);
+        return;
+    }
+
     {
-        int kh = 5;
+        int kh = 7;
         int kx = rx + 2, ky = cy + 1;
-        char nm[96];
-        snprintf(nm, sizeof nm, "%s   %s", s->name,
-                 live ? (blink ? "* 实时" : "o 实时") : "- 暂停");
+        char nm[128];
+
+        snprintf(nm, sizeof nm, "%s · %s · %s · %s",
+                 s->name,
+                 STOCK_SECTOR_NAME[s->sector],
+                 s->status == STK_NORMAL ? "正常" :
+                 (s->status == STK_RISK ? "ST风险" :
+                  (s->status == STK_HALT ? "停牌" : "已退市")),
+                 live ? (blink ? "*实时" : "o实时") : "-暂停");
         tc_panel(rx, cy, rw, kh, nm,
                  live ? TC_BORDER : TC_BG3,
                  TC_BG2,
@@ -5964,24 +7059,18 @@ static void stock_draw(int sel, int live, int blink, const char* msg)
 
         /* 第一行：现价 / 涨跌 / 区间 */
         tc_puts(kx, ky, "现价", TC_DIM, TC_BG2);
-        snprintf(buf, sizeof buf, "%d", s->current_price);
+        stk_price_str(buf, sizeof buf, s->current_price);
         tc_puts(kx + 5, ky, buf, TC_WHITE, TC_BG2);
 
         {
-            int base = (g_trend_n > 0) ? g_trend[sel][0] : s->current_price;
-            int diff = s->current_price - base;
-            float pct = base > 0 ? (float)diff * 100.0f / base : 0;
-            snprintf(buf, sizeof buf, "%+d (%+.2f%%)", diff, pct);
+            int diff = s->current_price - s->prev_close;
+            float pct = s->prev_close > 0 ? (float)diff * 100.0f / s->prev_close : 0;
+            snprintf(buf, sizeof buf, "%+.2f (%+.2f%%)", diff / 100.0, pct);
             tc_puts(kx + 14, ky, buf, diff >= 0 ? TC_RED : TC_GREEN, TC_BG2);
         }
 
-        if (rw > 58 && g_trend_n > 1) {
-            int lo = g_trend[sel][0], hi = g_trend[sel][0], k;
-            for (k = 1; k < g_trend_n; k++) {
-                if (g_trend[sel][k] < lo) lo = g_trend[sel][k];
-                if (g_trend[sel][k] > hi) hi = g_trend[sel][k];
-            }
-            snprintf(buf, sizeof buf, "区间 %d~%d", lo, hi);
+        if (rw > 58) {
+            snprintf(buf, sizeof buf, "区间 %d~%d", s->day_low, s->day_high);
             tc_puts(rx + rw - 18, ky, buf, TC_DIM, TC_BG2);
         }
         ky++;
@@ -5993,51 +7082,115 @@ static void stock_draw(int sel, int live, int blink, const char* msg)
             snprintf(buf, sizeof buf, "%d 股", hold);
             tc_puts(kx + 5, ky, buf, hold > 0 ? TC_CYAN : TC_FAINT, TC_BG2);
             if (hold > 0) {
-                long long mv = (long long)hold * s->current_price;
+                long long mv = (long long)hold * s->current_price / 100;
                 char mb[32];
                 tui_fmt_money(mb, sizeof mb, mv);
                 snprintf(buf, sizeof buf, "市值 %s", mb);
                 tc_puts(kx + 16, ky, buf, TC_YELLOW, TC_BG2);
+                if (player.stock_margin_debt[sel] > 0 && rw > 62) {
+                    char lb[32];
+                    tui_fmt_money(lb, sizeof lb, (long long)player.stock_margin_debt[sel]);
+                    snprintf(buf, sizeof buf, "融资 %s", lb);
+                    tc_puts(rx + rw - 18, ky, buf, TC_MAGENTA, TC_BG2);
+                }
             }
         }
         ky++;
 
-        /* 第三行：波动 / 基准 / 时间 */
+        /* 第三行：开 / 昨收 / 最高 / 最低 */
         {
-            time_t now = time(NULL);
-            struct tm* lt = localtime(&now);
-            snprintf(buf, sizeof buf, "波动 %d%%  基准价 %d  %02d:%02d:%02d",
-                     s->volatility, s->base_price,
-                     lt ? lt->tm_hour : 0, lt ? lt->tm_min : 0, lt ? lt->tm_sec : 0);
+            char a1[16], a2[16], a3[16], a4[16];
+            stk_price_str(a1, sizeof a1, s->open_price);
+            stk_price_str(a2, sizeof a2, s->prev_close);
+            stk_price_str(a3, sizeof a3, s->day_high);
+            stk_price_str(a4, sizeof a4, s->day_low);
+            snprintf(buf, sizeof buf, "开 %s  昨收 %s  高 %s  低 %s", a1, a2, a3, a4);
+        }
+        tc_puts(kx, ky, buf, TC_DIM, TC_BG2);
+        ky++;
+
+        /* 第四行：波动 / 基准 / 交易日 / 担保比例 */
+        {
+            int ratio = stk_maint_ratio();
+            char bbase[16];
+            stk_price_str(bbase, sizeof bbase, s->base_price);
+            snprintf(buf, sizeof buf, "波动 %d%%  基准 %s  第 %d 交易日  %d/%d",
+                     s->volatility, bbase, player.stock_day,
+                     player.stock_tick, STOCK_TICKS_PER_DAY);
             tc_puts(kx, ky, buf, TC_FAINT, TC_BG2);
+            if (player.stock_loan_total > 0 && rw > 58) {
+                snprintf(buf, sizeof buf, "担保 %d%%", ratio);
+                tc_puts(rx + rw - 12, ky, buf,
+                        ratio < STOCK_MAINT_RATIO ? TC_RED :
+                        (ratio < 160 ? TC_ORANGE : TC_GREEN), TC_BG2);
+            }
+        }
+        ky++;
+
+        /* 第五行：风险提示 */
+        if (s->status == STK_RISK) {
+            snprintf(buf, sizeof buf, "ST 股 · 连续 %d 日低迷 · 再 %d 日未改善即终止上市",
+                     s->bad_days, STOCK_ST_DAYS - s->st_days);
+            tc_puts(kx, ky, buf, TC_ORANGE, TC_BG2);
+        } else if (s->status == STK_HALT) {
+            tc_puts(kx, ky, "停牌中 · 停牌结束后将按清算价强制变现持仓", TC_MAGENTA, TC_BG2);
+        } else if (s->status == STK_DELISTED) {
+            tc_puts(kx, ky, "已退市 · 永久无法交易", TC_FAINT, TC_BG2);
+        } else if (s->current_price < s->base_price * 45 / 100) {
+            tc_puts(kx, ky, "跌破基准价 45% · 距离 ST 只差一步", TC_RED, TC_BG2);
+        } else if (s->limit_lock == 1) {
+            tc_puts(kx, ky, "封涨停 · 买不进", TC_RED, TC_BG2);
+        } else if (s->limit_lock == -1) {
+            tc_puts(kx, ky, "封跌停 · 卖不出", TC_GREEN, TC_BG2);
+        } else {
+            int st_line = s->base_price * STOCK_ST_LINE / 100;
+            int dl_line = s->base_price * STOCK_DELIST_LINE / 100;
+            int to_st = s->current_price > 0 ? (s->current_price - st_line) * 100 / s->current_price : 0;
+            int to_dl = s->current_price > 0 ? (s->current_price - dl_line) * 100 / s->current_price : 0;
+            snprintf(buf, sizeof buf, "再跌 %d%% 触 ST · 再跌 %d%% 触退市 · 涨跌停 ±%d%%",
+                     to_st, to_dl, stk_limit_pct(s));
+            tc_puts(kx, ky, buf, to_st < 20 ? TC_ORANGE : TC_FAINT, TC_BG2);
         }
     }
 
     /* ===== 右侧：折线图 ===== */
     {
-        int chy = cy + 5;
-        int chh = ch - 5;
+        int chy = cy + 7;
+        int chh = ch - 9;
         int base = (g_trend_n > 0) ? g_trend[sel][0] : s->current_price;
         line_fg = (s->current_price >= base) ? TC_RED : TC_GREEN;
         if (chh >= 6) {
             int start = 0, nn = g_trend_n;
-            int cap = rw - 12;               /* 每列一个点，避免竖线糊成柱子 */
+            int cap = rw - 12;
+            int ybuf[TREND_MAX];
+            int q;
             if (cap < 12) cap = 12;
             if (nn > cap) { start = nn - cap; nn = cap; }
-            tc_linechart(rx, chy, rw, chh, g_trend[sel] + start, nn,
+            if (nn > TREND_MAX) nn = TREND_MAX;
+            for (q = 0; q < nn; q++) ybuf[q] = g_trend[sel][start + q] / 100;
+            tc_linechart(rx, chy, rw, chh, ybuf, nn,
                          "分时走势 · 涨红跌绿", line_fg, TC_FAINT, TC_BG2, 1);
         }
     }
 
     /* ===== 底部 ===== */
     snprintf(buf, sizeof buf,
-             " [方向键] 选股  [B] 买入  [S] 卖出  [空格] %s  [R] 跳一档  [C] 放大图表  [Esc] 返回 ",
-             live ? "暂停实时" : "开启实时");
+             " [方向键] 选股  [B] 买入  [S] 卖出  [N] 新闻(%d新)  [空格] %s  [R] 跳档  [C] 放大  [Esc] 返回 ",
+             player.stock_news_unread,
+             live ? "暂停" : "实时");
     tui_draw_keybar(buf);
 
     if (msg && msg[0]) tc_puts(2, H - 1, msg, TC_YELLOW, TC_BG);
     else {
-        tc_puts(2, H - 1, "提示：实时行情每秒跳动一次，历史同时写入 save/stock_history.dat", TC_FAINT, TC_BG);
+        NewsItem* it = news_recent(0);
+        char tick[320];
+        if (it) {
+            snprintf(tick, sizeof tick, "坤透社 | %s", it->head);
+            tc_puts(2, H - 1, tick, it->type == NEWS_TYPE_ENT ? TC_PINK :
+                    (it->type == NEWS_TYPE_ECO ? TC_YELLOW : TC_CYAN), TC_BG);
+        } else {
+            tc_puts(2, H - 1, "提示：行情每秒推进一次，每 120 tick 结算一个交易日", TC_FAINT, TC_BG);
+        }
     }
 }
 
@@ -6045,50 +7198,90 @@ void show_stock_market() {
     int sel = 0;
     int live = 1;
     int blink = 0;
+    int view = 0;
     time_t last_tick = time(NULL);
     char msg[192];
     time_t msg_until = 0;
 
     tui_page_enter("股票市场");
     g_stock_focus = 0;
+    g_stock_view = 0;
+    g_news_filter = -1;
     tui_trend_load();
     if (g_trend_n <= 1 && player.stocks[0].current_price > 0) tui_trend_push();
+
+    /* 首次进入先开市发一条新闻，别让新闻页空着 */
+    if (g_news_n == 0) news_daily_refresh();
 
     msg[0] = 0;
 
     for (;;) {
         int k;
 
-        if (live) {
+        if (live && view == 0) {
             time_t now = time(NULL);
             if (now != last_tick) {
                 last_tick = now;
                 tui_stock_live_tick();
                 blink = !blink;
+                /* 有人被强平/退市就弹提示 */
+                if (player.stock_loan_total > 0 && stk_maint_ratio() < 130) {
+                    snprintf(msg, sizeof msg, "!! 担保比例跌破 130%%，券商正在强制平仓 !!");
+                    msg_until = time(NULL) + 4;
+                }
             }
+        } else if (view == 0) {
+            last_tick = time(NULL);
         }
+
         if (msg_until && time(NULL) > msg_until) { msg[0] = 0; msg_until = 0; }
 
-        stock_draw(sel, live, blink, msg);
+        stock_draw(sel, live, blink, msg, view);
         tui_present();
 
         k = tui_key_nb();
         if (k < 0) { tui_sleep_ms(60); continue; }
 
-        if (k == 27 || k == 'q') break;
+        if (k == 27 || k == 'q') {
+            if (view == 1) { view = 0; g_stock_view = 0; continue; }
+            break;
+        }
 
-        if (k == TK_UP)   { sel = (sel - 1 + 25) % 25; continue; }
-        if (k == TK_DOWN) { sel = (sel + 1) % 25; continue; }
-        if (k == TK_PGUP) { sel = (sel - 5 + 25) % 25; continue; }
-        if (k == TK_PGDN) { sel = (sel + 5) % 25; continue; }
+        if (view == 1) {
+            if (k == 'n') { view = 0; continue; }
+            if (k == '1') { g_news_filter = NEWS_TYPE_ENT; continue; }
+            if (k == '2') { g_news_filter = NEWS_TYPE_ECO; continue; }
+            if (k == '3') { g_news_filter = NEWS_TYPE_POL; continue; }
+            if (k == '0') { g_news_filter = -1; continue; }
+            if (k == TK_UP || k == TK_DOWN || k == TK_PGUP || k == TK_PGDN) continue;
+            continue;
+        }
+
+        if (k == TK_UP)   { sel = (sel - 1 + STOCK_COUNT) % STOCK_COUNT; continue; }
+        if (k == TK_DOWN) { sel = (sel + 1) % STOCK_COUNT; continue; }
+        if (k == TK_PGUP) { sel = (sel - 5 + STOCK_COUNT) % STOCK_COUNT; continue; }
+        if (k == TK_PGDN) { sel = (sel + 5) % STOCK_COUNT; continue; }
         if (k == TK_HOME) { sel = 0; continue; }
-        if (k == TK_END)  { sel = 24; continue; }
+        if (k == TK_END)  { sel = STOCK_COUNT - 1; continue; }
 
         if (k == ' ') { live = !live; snprintf(msg, sizeof msg, "实时行情已%s。", live ? "开启" : "暂停"); msg_until = time(NULL) + 2; continue; }
 
+        if (k == 'n') {
+            view = 1;
+            g_stock_view = 1;
+            player.stock_news_unread = 0;
+            continue;
+        }
+
         if (k == 'r') {
             tui_stock_live_tick();
-            snprintf(msg, sizeof msg, "手动跳档：%s 现价 %d", player.stocks[sel].name, player.stocks[sel].current_price);
+            {
+                char pp[16];
+                stk_price_str(pp, sizeof pp, player.stocks[sel].current_price);
+                snprintf(msg, sizeof msg, "手动跳档：%s 现价 %s（第 %d 交易日 %d/%d）",
+                         player.stocks[sel].name, pp,
+                         player.stock_day, player.stock_tick, STOCK_TICKS_PER_DAY);
+            }
             msg_until = time(NULL) + 2;
             continue;
         }
@@ -6102,40 +7295,56 @@ void show_stock_market() {
 
         if (k == 'b' || k == 's') {
             int amount = 0;
+            int margin = 0;
             char prompt[96];
             int inv_before = player.invested_stocks[sel];
             int unit_price = player.stocks[sel].current_price;
 
-            snprintf(prompt, sizeof prompt, "%s · %d 坤币/股 · 数量 ›",
-                     k == 'b' ? "买入" : "卖出", player.stocks[sel].current_price);
+            if (player.stocks[sel].status == STK_DELISTED ||
+                player.stocks[sel].status == STK_HALT) {
+                snprintf(msg, sizeof msg, "%s 已停牌/退市，无法交易。", player.stocks[sel].name);
+                msg_until = time(NULL) + 3;
+                continue;
+            }
 
-            stock_draw(sel, 0, 0, "");
+            snprintf(prompt, sizeof prompt, "%s · %.2f 坤币/股 · 数量 ›",
+                     k == 'b' ? "买入" : "卖出", player.stocks[sel].current_price / 100.0);
+
+            stock_draw(sel, 0, 0, "", 0);
             tui_present();
-            if (tui_input_int(tui_cv.h - 1, tui_cv.w, prompt, 1, 10000, &amount) < 0) {
+            if (tui_input_int(tui_cv.h - 1, tui_cv.w, prompt, 1, 100000, &amount) < 0) {
                 snprintf(msg, sizeof msg, "已取消。");
                 msg_until = time(NULL) + 2;
                 continue;
             }
 
+            if (k == 'b') {
+                /* 融资买入询问 */
+                if (tui_input_int(tui_cv.h - 1, tui_cv.w,
+                                  "融资买入？自付50%，券商垫50%（1=是 0=否）›", 0, 1, &margin) < 0)
+                    margin = 0;
+            }
+
             tui_stream_reset();
-            if (k == 'b') buy_stock(sel, amount);
+            if (k == 'b') buy_stock_ext(sel, amount, margin);
             else          sell_stock(sel, amount);
             tui_stream_reset();
 
             if (k == 'b') {
                 if (player.invested_stocks[sel] > inv_before)
-                    snprintf(msg, sizeof msg, "买入成功：%s × %d，成交额 %lld 坤币",
+                    snprintf(msg, sizeof msg, "%s买入成功：%s × %d，成交额 %lld 坤币",
+                             margin ? "融资" : "",
                              player.stocks[sel].name, amount,
-                             (long long)amount * unit_price);
+                             (long long)amount * unit_price / 100);
                 else
-                    snprintf(msg, sizeof msg, "买入失败：坤币不足或数量无效。");
+                    snprintf(msg, sizeof msg, "买入失败：坤币不足、涨停封板或数量无效。");
             } else {
                 if (player.invested_stocks[sel] < inv_before)
                     snprintf(msg, sizeof msg, "卖出成功：%s × %d，成交额 %lld 坤币",
                              player.stocks[sel].name, amount,
-                             (long long)amount * unit_price);
+                             (long long)amount * unit_price / 100);
                 else
-                    snprintf(msg, sizeof msg, "卖出失败：持仓不足。");
+                    snprintf(msg, sizeof msg, "卖出失败：持仓不足或封跌停。");
             }
             msg_until = time(NULL) + 3;
             continue;
@@ -6400,70 +7609,124 @@ static const char* TUI_TIPS[] = {
 };
 #define TUI_TIPS_N ((int)(sizeof(TUI_TIPS)/sizeof(TUI_TIPS[0])))
 
+/* 去掉新闻标题开头的【xx】类型标签，首页用色块代替 */
+static const char* news_strip_tag(const char* hd)
+{
+    const unsigned char* p = (const unsigned char*)hd;
+    if (!hd) return "";
+    if (p[0] == 0xE3 && p[1] == 0x80 && p[2] == 0x90) {   /* 【 */
+        int i = 3;
+        while (p[i]) {
+            if (p[i] == 0xE3 && p[i + 1] == 0x80 && p[i + 2] == 0x91)   /* 】 */
+                return hd + i + 3;
+            i++;
+        }
+    }
+    return hd;
+}
+
+/* 首页速报：警告 → 坤透社快讯（主力）→ 今日目标 → 贴士 */
 static void tui_draw_report(int x, int y, int w, int h)
 {
     int line = 0;
     int warn = 0;
+    int news_rows;
 
     if (h < 1 || w < 10) return;
 
-    /* 警告优先 */
+    /* ---- 警告区：最多两条，别把新闻挤没了 ---- */
     if (player.health <= 0 && line < h) {
         tc_puts(x, y + line, "你已经昏迷了 —— 马上去医院（22）", TC_RED, TC_BG2);
         line++; warn = 1;
     } else if (player.health < 30 && line < h) {
-        tc_puts(x, y + line, "身受重伤，血量低于 30，别再硬撑。", TC_RED, TC_BG2);
+        tc_puts(x, y + line, "身受重伤，血量低于 30，别再硬撑", TC_RED, TC_BG2);
         line++; warn = 1;
     }
-    if (player.hunger < 20 && line < h) {
-        tc_puts(x, y + line, "饿得发抖 —— 饱食度不足 20，去买点吃的。", TC_RED, TC_BG2);
+    if (player.hunger < 20 && line < h && warn < 2) {
+        tc_puts(x, y + line, "饿得发抖 —— 饱食度不足 20，去买点吃的", TC_RED, TC_BG2);
         line++; warn = 1;
     }
-    if (player.spirit < 20 && line < h) {
-        tc_puts(x, y + line, "精神濒临崩溃，再熬下去会出事。", TC_ORANGE, TC_BG2);
-        line++; warn = 1;
-    }
-    if (player.daily_time_slots <= 0 && line < h) {
-        tc_puts(x, y + line, "今天的时间用完了 —— 去睡觉（21），或者结束今天。", TC_YELLOW, TC_BG2);
+    if (player.spirit < 20 && line < h && warn < 2) {
+        tc_puts(x, y + line, "精神濒临崩溃，再熬下去会出事", TC_ORANGE, TC_BG2);
         line++; warn = 1;
     }
 
-    if (!warn && line < h) {
-        tc_puts(x, y + line, "状态正常，坤城今天对你还算客气。", TC_GREEND, TC_BG2);
-        line++;
-    }
-
-    /* 今日目标 */
-    if (line + 4 <= h) {
-        static const char* goal_txt[3] = { "打工一次", "今日收入满 200", "看一次行情" };
-        int g, done[3];
-        done[0] = player.today_work_count > 0;
-        done[1] = player.today_income >= 200;
-        done[2] = g_trend_n > 0;
-        line++;
-        for (g = 0; g < 3 && line < h; g++) {
-            tc_puts(x, y + line, done[g] ? "[x]" : "[ ]", done[g] ? TC_GREEN : TC_FAINT, TC_BG2);
-            tc_putsn(x + 4, y + line, w - 4, goal_txt[g], done[g] ? TC_GREEND : TC_DIM, TC_BG2);
+    /* ---- 坤透社快讯：铺满剩余空间 ---- */
+    news_rows = h - line - 2;              /* 底部留 2 行给目标 + 贴士 */
+    if (news_rows > 9) news_rows = 9;
+    if (news_rows > 0 && g_news_n > 0) {
+        int k;
+        if (line < h) {                    /* 小标题 */
+            tc_puts(x, y + line, "坤透社快讯", TC_ORANGE, TC_BG2);
+            if (w > 30) tc_puts(x + w - 9, y + line, "[N] 全部", TC_FAINT, TC_BG2);
+            line++;
+            news_rows--;
+        }
+        for (k = 0; k < news_rows && line < h; k++) {
+            NewsItem* it = news_recent(k);
+            const char* tag;
+            int tc;
+            if (!it) break;
+            tag = (it->type == NEWS_TYPE_ENT) ? "娱" :
+                  (it->type == NEWS_TYPE_ECO) ? "经" : "政";
+            tc = (it->type == NEWS_TYPE_ENT) ? TC_PINK :
+                 (it->type == NEWS_TYPE_ECO ? TC_YELLOW : TC_CYAN);
+            tc_puts(x, y + line, tag, tc, TC_BG2);
+            tc_putsn(x + 3, y + line, w - 3, news_strip_tag(it->head), TC_DIM, TC_BG2);
             line++;
         }
+    } else if (!warn && line < h) {
+        tc_puts(x, y + line, "市场安静得不像坤城，还没有新闻。", TC_FAINT, TC_BG2);
+        line++;
     }
 
-    /* 贴士 */
-    if (line + 2 <= h) {
+    /* ---- 今日目标：压成一行 ---- */
+    if (line < h) {
+        char gb[192];
+        int d0 = player.today_work_count > 0;
+        int d1 = player.today_income >= 200;
+        int d2 = g_trend_n > 0;
+        snprintf(gb, sizeof gb, "今日目标 %d/3   %s打工  %s收入200  %s行情",
+                 d0 + d1 + d2, d0 ? "[x]" : "[ ]", d1 ? "[x]" : "[ ]", d2 ? "[x]" : "[ ]");
+        tc_putsn(x, y + line, w, gb, (d0 + d1 + d2) >= 3 ? TC_GREEN : TC_DIM, TC_BG2);
+        line++;
+    }
+
+    /* ---- 贴士 ---- */
+    if (line < h) {
         int idx = (player.day_count * 7 + line) % TUI_TIPS_N;
-        if (line < h) {
-            tc_put(x, y + line, ".", TC_FAINT, TC_BG2);
-            tc_putsn(x + 2, y + line, w - 2, TUI_TIPS[idx], TC_DIM, TC_BG2);
-            line++;
-        }
-        if (line < h) {
-            int save_in = 0;
-            char buf[128];
-            snprintf(buf, sizeof buf, "自动存档每 5 分钟 · 今日已打工 %d 次 · 进度 %d%%",
-                     player.today_work_count,
-                     (int)((long long)player.kun_exp * 100 / (player.level > 0 ? player.level * 100 : 100)));
-            tc_putsn(x, y + line, w, buf, TC_FAINT, TC_BG2);
-            (void)save_in;
+        tc_put(x, y + line, ".", TC_FAINT, TC_BG2);
+        tc_putsn(x + 2, y + line, w - 2, TUI_TIPS[idx], TC_DIM, TC_BG2);
+        line++;
+    }
+}
+
+/* 全屏新闻页（主菜单按 N 进入） */
+static void tui_news_page(void)
+{
+    time_t tick = time(NULL);
+
+    if (g_news_n == 0) news_daily_refresh();
+
+    for (;;) {
+        int k;
+        tui_begin();
+        tui_draw_topbar();
+        stock_draw_news(0, 1, tui_cv.w, tui_cv.h - 3, g_news_filter);
+        tui_draw_keybar(" [1] 娱乐   [2] 经济   [3] 政治   [0] 全部   [Esc] 返回 ");
+        tui_present();
+
+        for (;;) {
+            k = tui_key_nb();
+            if (k >= 0) {
+                if (k == 27 || k == 'q' || k == 'Q') { g_news_filter = -1; return; }
+                if (k == '1') { g_news_filter = NEWS_TYPE_ENT; break; }
+                if (k == '2') { g_news_filter = NEWS_TYPE_ECO; break; }
+                if (k == '3') { g_news_filter = NEWS_TYPE_POL; break; }
+                if (k == '0') { g_news_filter = -1; break; }
+            }
+            tui_sleep_ms(25);
+            if (time(NULL) != tick) { tick = time(NULL); break; }
         }
     }
 }
@@ -6513,9 +7776,13 @@ static void tui_draw_main_menu(int sel)
         if (g_trend_n > 1 && cw > 40) {
             int idx[TREND_MAX], k, delta;
             for (i = 0; i < g_trend_n; i++) {
-                int s = 0;
-                for (k = 0; k < 25; k++) s += g_trend[k][i];
-                idx[i] = s * 10 / 25;
+                int s = 0, n = 0;
+                for (k = 0; k < 25; k++) {
+                    if (player.stocks[k].status == STK_DELISTED) continue;
+                    s += g_trend[k][i];
+                    n++;
+                }
+                idx[i] = n > 0 ? s * 10 / (n * 100) : 0;
             }
             tc_puts(ix, iy, "坤城指数", TC_DIM, TC_BG2);
             snprintf(b1, sizeof b1, "%d", idx[g_trend_n - 1]);
@@ -6573,7 +7840,7 @@ static void tui_draw_main_menu(int sel)
 
     /* ===== 坤城速报 ===== */
     report_h = avail - mh;
-    if (report_h > 10) report_h = 10;
+    if (report_h > 14) report_h = 14;
     if (report_h >= 5) {
         int ry = cy + mh;
         tc_panel(cx, ry, cw, report_h, "坤城速报", TC_BORDER, TC_BG2, TC_ORANGE);
@@ -6581,7 +7848,7 @@ static void tui_draw_main_menu(int sel)
     }
     }
 
-    tui_draw_keybar(" [方向键] 选择   [回车] 进入   [1-9/0] 快选   [Q] 退出 ");
+    tui_draw_keybar(" [方向键] 选择   [回车] 进入   [1-9/0] 快选   [N] 坤城新闻   [Q] 退出 ");
 }
 
 static int tui_run_main_menu(void)
@@ -6604,6 +7871,7 @@ static int tui_run_main_menu(void)
                 if (k == TK_HOME)  { sel = 0; break; }
                 if (k == TK_END)   { sel = 22; break; }
                 if (k == 13)       { return MENU_CODE[sel]; }
+                if (k == 'n' || k == 'N') { tui_news_page(); break; }
                 if (k == 'q' || k == 27) return 0;
                 if (k >= '0' && k <= '9') {
                     int want = (k == '0') ? 0 : (k - '0');
@@ -6646,6 +7914,7 @@ static void tui_selftest(void)
     player.prestige_level = 2;
     player.skill_points = 5;
     player.invested_stocks[8] = 200;
+    if (g_news_n == 0) { int q; for (q = 0; q < 7; q++) news_generate_one(); }
 
     tui_trend_load();
     for (i = 0; i < 40; i++) tui_stock_live_tick();
@@ -6657,6 +7926,16 @@ static void tui_selftest(void)
     } else if (frame == 5) {
         g_stock_focus = 1;
         stock_draw(8, 1, 1, "");
+    } else if (frame == 6) {
+        stock_draw(8, 1, 1, "", 1);
+    } else if (frame == 7) {
+        g_news_filter = NEWS_TYPE_ECO;
+        stock_draw(8, 1, 1, "", 1);
+    } else if (frame == 8) {
+        tui_begin();
+        tui_draw_topbar();
+        stock_draw_news(0, 1, tui_cv.w, tui_cv.h - 3, -1);
+        tui_draw_keybar(" [1] 娱乐   [2] 经济   [3] 政治   [0] 全部   [Esc] 返回 ");
     } else if (frame == 3) {
         tui_stream_reset();
         tui_stream_set_title("技能系统");
